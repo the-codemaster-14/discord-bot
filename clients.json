@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Jennifer",
+    "phone": "416-555-1234",
+    "email": "jennifer@email.com",
+    "sessionsUsed": 1,
+    "sessionsTotal": 6,
+    "bookedThisMonth": 1,
+    "lastResetMonth": "2026-04"
+  }
+]
