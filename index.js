@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const fs = require('fs');
+const { createClient } = require('@supabase/supabase-js');
 
 const client = new Client({
   intents: [
@@ -9,33 +9,12 @@ const client = new Client({
   ]
 });
 
-const CLIENTS_FILE = './clients.json';
-
-// PUT YOUR TOKEN HERE
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// OPTIONAL: put a specific channel ID here if you only want updates sent there.
-// Leave as "" to let the bot reply in whatever channel you used the command in.
-const BOOKING_CHANNEL_ID = "";
-
-// ---------- FILE HELPERS ----------
-
-function ensureClientsFile() {
-  if (!fs.existsSync(CLIENTS_FILE)) {
-    fs.writeFileSync(CLIENTS_FILE, '[]');
-  }
-}
-
-function loadClients() {
-  ensureClientsFile();
-  return JSON.parse(fs.readFileSync(CLIENTS_FILE, 'utf8'));
-}
-
-function saveClients(clients) {
-  fs.writeFileSync(CLIENTS_FILE, JSON.stringify(clients, null, 2));
-}
-
-// ---------- MONTH RESET HELPERS ----------
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 function currentMonthKey() {
   const now = new Date();
@@ -44,288 +23,285 @@ function currentMonthKey() {
   return `${year}-${month}`;
 }
 
-function resetMonthlyCountsIfNeeded() {
-  const clients = loadClients();
+async function getAllClients() {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
+async function getClientByEmail(email) {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+    .eq('email', email)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function addClient({ name, phone, email, sessions_total }) {
+  const { data, error } = await supabase
+    .from('clients')
+    .insert([{
+      name,
+      phone,
+      email,
+      sessions_used: 0,
+      sessions_total,
+      booked_this_month: 0,
+      last_reset_month: currentMonthKey()
+    }])
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function updateClientByEmail(email, updates) {
+  const { data, error } = await supabase
+    .from('clients')
+    .update(updates)
+    .eq('email', email)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function resetMonthlyCountsIfNeeded() {
+  const clients = await getAllClients();
   const thisMonth = currentMonthKey();
-  let changed = false;
 
-  for (const client of clients) {
-    if (!client.lastResetMonth) {
-      client.lastResetMonth = thisMonth;
-      if (typeof client.bookedThisMonth !== 'number') {
-        client.bookedThisMonth = 0;
-      }
-      changed = true;
-      continue;
+  for (const c of clients) {
+    if (c.last_reset_month !== thisMonth) {
+      await updateClientByEmail(c.email, {
+        booked_this_month: 0,
+        last_reset_month: thisMonth
+      });
     }
-
-    if (client.lastResetMonth !== thisMonth) {
-      client.bookedThisMonth = 0;
-      client.lastResetMonth = thisMonth;
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    saveClients(clients);
   }
 }
 
-// Check once every hour
-setInterval(() => {
+setInterval(async () => {
   try {
-    resetMonthlyCountsIfNeeded();
+    await resetMonthlyCountsIfNeeded();
   } catch (error) {
     console.error('Monthly reset error:', error);
   }
 }, 60 * 60 * 1000);
 
-// ---------- FORMATTING ----------
-
-function formatBookingMessage(clientData, bookingDate, bookingTime) {
-  const sessionsRemaining = clientData.sessionsTotal - clientData.sessionsUsed;
-
-  return (
-`${clientData.name} has booked for ${bookingDate} at ${bookingTime}.
-Sessions remaining: ${sessionsRemaining}
-
-Email: ${clientData.email}
-Phone: ${clientData.phone}
-Booked this month: ${clientData.bookedThisMonth}`
-  );
-}
-
-async function sendBookingUpdate(message, text) {
-  if (BOOKING_CHANNEL_ID) {
-    const channel = await client.channels.fetch(BOOKING_CHANNEL_ID).catch(() => null);
-    if (channel) {
-      return channel.send(text);
-    }
-  }
-
-  return message.reply(text);
-}
-
-// ---------- BOT EVENTS ----------
-
-client.on('ready', () => {
+client.on('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  resetMonthlyCountsIfNeeded();
+  try {
+    await resetMonthlyCountsIfNeeded();
+  } catch (error) {
+    console.error('Startup reset error:', error);
+  }
 });
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  resetMonthlyCountsIfNeeded();
+  try {
+    await resetMonthlyCountsIfNeeded();
 
-  const args = message.content.trim().split(' ');
-  const command = args[0]?.toLowerCase();
+    const args = message.content.trim().split(' ');
+    const command = args[0]?.toLowerCase();
 
-  // !addclient Name phone email totalSessions
-  if (command === '!addclient') {
-    const name = args[1];
-    const phone = args[2];
-    const email = args[3]?.toLowerCase();
-    const totalSessions = Number(args[4] || 6);
+    if (command === '!addclient') {
+      const name = args[1];
+      const phone = args[2];
+      const email = args[3]?.toLowerCase();
+      const totalSessions = Number(args[4] || 6);
 
-    if (!name || !phone || !email) {
-      return message.reply('Usage: !addclient Name phone email@example.com totalSessions');
+      if (!name || !phone || !email) {
+        return message.reply('Usage: !addclient Name phone email@example.com totalSessions');
+      }
+
+      const existing = await getClientByEmail(email);
+      if (existing) {
+        return message.reply('Client already exists.');
+      }
+
+      await addClient({
+        name,
+        phone,
+        email,
+        sessions_total: totalSessions
+      });
+
+      return message.reply(`Added ${name}`);
     }
 
-    const clients = loadClients();
-    const exists = clients.find(c => c.email === email);
+    if (command === '!listclients') {
+      const clients = await getAllClients();
 
-    if (exists) {
-      return message.reply('Client already exists.');
+      if (clients.length === 0) {
+        return message.reply('No clients yet.');
+      }
+
+      const text = clients.map(c => {
+        const remaining = c.sessions_total - c.sessions_used;
+        return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining} | This month: ${c.booked_this_month}`;
+      }).join('\n');
+
+      return message.reply(text);
     }
 
-    clients.push({
-      name,
-      phone,
-      email,
-      sessionsUsed: 0,
-      sessionsTotal: totalSessions,
-      bookedThisMonth: 0,
-      lastResetMonth: currentMonthKey()
-    });
+    if (command === '!client') {
+      const email = args[1]?.toLowerCase();
 
-    saveClients(clients);
-    return message.reply(`Added ${name}`);
-  }
+      if (!email) {
+        return message.reply('Usage: !client email@example.com');
+      }
 
-  // !listclients
-  if (command === '!listclients') {
-    const clients = loadClients();
+      const c = await getClientByEmail(email);
 
-    if (clients.length === 0) {
-      return message.reply('No clients yet.');
-    }
+      if (!c) {
+        return message.reply('Client not found.');
+      }
 
-    const text = clients.map(c => {
-      const remaining = c.sessionsTotal - c.sessionsUsed;
-      return `${c.name} | ${c.email} | Used: ${c.sessionsUsed}/${c.sessionsTotal} | Remaining: ${remaining} | This month: ${c.bookedThisMonth}`;
-    }).join('\n');
+      const remaining = c.sessions_total - c.sessions_used;
 
-    return message.reply(text);
-  }
-
-  // !client email@example.com
-  if (command === '!client') {
-    const email = args[1]?.toLowerCase();
-
-    if (!email) {
-      return message.reply('Usage: !client email@example.com');
-    }
-
-    const clients = loadClients();
-    const clientData = clients.find(c => c.email === email);
-
-    if (!clientData) {
-      return message.reply('Client not found.');
-    }
-
-    const remaining = clientData.sessionsTotal - clientData.sessionsUsed;
-
-    return message.reply(
-`${clientData.name}
-Phone: ${clientData.phone}
-Email: ${clientData.email}
-Sessions Used: ${clientData.sessionsUsed}/${clientData.sessionsTotal}
+      return message.reply(
+`${c.name}
+Phone: ${c.phone}
+Email: ${c.email}
+Sessions Used: ${c.sessions_used}/${c.sessions_total}
 Sessions Remaining: ${remaining}
-Booked This Month: ${clientData.bookedThisMonth}`
-    );
-  }
-
-  // !book email@example.com April-18-2026 1:00PM
-  if (command === '!book') {
-    const email = args[1]?.toLowerCase();
-    const bookingDate = args[2];
-    const bookingTime = args[3];
-
-    if (!email || !bookingDate || !bookingTime) {
-      return message.reply('Usage: !book email@example.com April-18-2026 1:00PM');
+Booked This Month: ${c.booked_this_month}`
+      );
     }
 
-    const clients = loadClients();
-    const clientData = clients.find(c => c.email === email);
+    if (command === '!book') {
+      const email = args[1]?.toLowerCase();
+      const bookingDate = args[2];
+      const bookingTime = args[3];
 
-    if (!clientData) {
-      return message.reply('Client not found.');
+      if (!email || !bookingDate || !bookingTime) {
+        return message.reply('Usage: !book email@example.com April-18-2026 1:00PM');
+      }
+
+      const c = await getClientByEmail(email);
+
+      if (!c) {
+        return message.reply('Client not found.');
+      }
+
+      const updated = await updateClientByEmail(email, {
+        sessions_used: c.sessions_used + 1,
+        booked_this_month: c.booked_this_month + 1
+      });
+
+      const sessionsRemaining = updated.sessions_total - updated.sessions_used;
+
+      return message.reply(
+`${updated.name} has booked for ${bookingDate} at ${bookingTime}.
+Sessions remaining: ${sessionsRemaining}
+
+Email: ${updated.email}
+Phone: ${updated.phone}
+Booked this month: ${updated.booked_this_month}`
+      );
     }
 
-    clientData.sessionsUsed += 1;
-    clientData.bookedThisMonth += 1;
+    if (command === '!undosession') {
+      const email = args[1]?.toLowerCase();
 
-    saveClients(clients);
+      if (!email) {
+        return message.reply('Usage: !undosession email@example.com');
+      }
 
-    const text = formatBookingMessage(clientData, bookingDate, bookingTime);
-    return sendBookingUpdate(message, text);
-  }
+      const c = await getClientByEmail(email);
 
-  // !undosession email@example.com
-  if (command === '!undosession') {
-    const email = args[1]?.toLowerCase();
+      if (!c) {
+        return message.reply('Client not found.');
+      }
 
-    if (!email) {
-      return message.reply('Usage: !undosession email@example.com');
+      const updated = await updateClientByEmail(email, {
+        sessions_used: Math.max(0, c.sessions_used - 1),
+        booked_this_month: Math.max(0, c.booked_this_month - 1)
+      });
+
+      return message.reply(`Removed one booking/session from ${updated.name}`);
     }
 
-    const clients = loadClients();
-    const clientData = clients.find(c => c.email === email);
+    if (command === '!setphone') {
+      const email = args[1]?.toLowerCase();
+      const phone = args[2];
 
-    if (!clientData) {
-      return message.reply('Client not found.');
+      if (!email || !phone) {
+        return message.reply('Usage: !setphone email@example.com 416-555-1234');
+      }
+
+      const c = await getClientByEmail(email);
+
+      if (!c) {
+        return message.reply('Client not found.');
+      }
+
+      await updateClientByEmail(email, { phone });
+      return message.reply(`Updated phone for ${c.name}`);
     }
 
-    if (clientData.sessionsUsed > 0) {
-      clientData.sessionsUsed -= 1;
+    if (command === '!setsessions') {
+      const email = args[1]?.toLowerCase();
+      const total = Number(args[2]);
+
+      if (!email || Number.isNaN(total)) {
+        return message.reply('Usage: !setsessions email@example.com 6');
+      }
+
+      const c = await getClientByEmail(email);
+
+      if (!c) {
+        return message.reply('Client not found.');
+      }
+
+      await updateClientByEmail(email, { sessions_total: total });
+      return message.reply(`Updated total sessions for ${c.name} to ${total}`);
     }
 
-    if (clientData.bookedThisMonth > 0) {
-      clientData.bookedThisMonth -= 1;
+    if (command === '!removeclient') {
+      const email = args[1]?.toLowerCase();
+
+      if (!email) {
+        return message.reply('Usage: !removeclient email@example.com');
+      }
+
+      const { error } = await supabase
+        .from('clients')
+        .delete()
+        .eq('email', email);
+
+      if (error) throw error;
+
+      return message.reply(`Removed ${email}`);
     }
 
-    saveClients(clients);
-    return message.reply(`Removed one booking/session from ${clientData.name}`);
-  }
+    if (command === '!resetmonth') {
+      const clients = await getAllClients();
+      const thisMonth = currentMonthKey();
 
-  // !setphone email@example.com 416-555-1234
-  if (command === '!setphone') {
-    const email = args[1]?.toLowerCase();
-    const phone = args[2];
+      for (const c of clients) {
+        await updateClientByEmail(c.email, {
+          booked_this_month: 0,
+          last_reset_month: thisMonth
+        });
+      }
 
-    if (!email || !phone) {
-      return message.reply('Usage: !setphone email@example.com 416-555-1234');
+      return message.reply('Monthly booking counts reset.');
     }
 
-    const clients = loadClients();
-    const clientData = clients.find(c => c.email === email);
-
-    if (!clientData) {
-      return message.reply('Client not found.');
-    }
-
-    clientData.phone = phone;
-    saveClients(clients);
-    return message.reply(`Updated phone for ${clientData.name}`);
-  }
-
-  // !setsessions email@example.com 6
-  if (command === '!setsessions') {
-    const email = args[1]?.toLowerCase();
-    const total = Number(args[2]);
-
-    if (!email || Number.isNaN(total)) {
-      return message.reply('Usage: !setsessions email@example.com 6');
-    }
-
-    const clients = loadClients();
-    const clientData = clients.find(c => c.email === email);
-
-    if (!clientData) {
-      return message.reply('Client not found.');
-    }
-
-    clientData.sessionsTotal = total;
-    saveClients(clients);
-    return message.reply(`Updated total sessions for ${clientData.name} to ${total}`);
-  }
-
-  // !removeclient email@example.com
-  if (command === '!removeclient') {
-    const email = args[1]?.toLowerCase();
-
-    if (!email) {
-      return message.reply('Usage: !removeclient email@example.com');
-    }
-
-    const clients = loadClients();
-    const filtered = clients.filter(c => c.email !== email);
-
-    if (filtered.length === clients.length) {
-      return message.reply('Client not found.');
-    }
-
-    saveClients(filtered);
-    return message.reply(`Removed ${email}`);
-  }
-
-  // !resetmonth
-  if (command === '!resetmonth') {
-    const clients = loadClients();
-
-    for (const client of clients) {
-      client.bookedThisMonth = 0;
-      client.lastResetMonth = currentMonthKey();
-    }
-
-    saveClients(clients);
-    return message.reply('Monthly booking counts reset.');
-  }
-
-  // !helpbot
-  if (command === '!helpbot') {
-    return message.reply(
+    if (command === '!helpbot') {
+      return message.reply(
 `Commands:
 !addclient Name phone email@example.com totalSessions
 !listclients
@@ -336,7 +312,11 @@ Booked This Month: ${clientData.bookedThisMonth}`
 !setsessions email@example.com 6
 !removeclient email@example.com
 !resetmonth`
-    );
+      );
+    }
+  } catch (error) {
+    console.error(error);
+    return message.reply('Something went wrong.');
   }
 });
 
