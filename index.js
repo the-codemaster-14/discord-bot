@@ -192,30 +192,63 @@ ${text}`
       );
     }
 
-    if (command === '!client') {
-      const email = args[1]?.toLowerCase();
+   if (command === '!client') {
+  const query = args.slice(1).join(' ').trim().toLowerCase();
 
-      if (!email) {
-        return message.reply('Usage: !client email@example.com');
-      }
+  if (!query) {
+    return message.reply('Usage: !client email@example.com or !client partial name');
+  }
 
-      const c = await getClientByEmail(email);
+  const exactEmailMatch = await getClientByEmail(query);
 
-      if (!c) {
-        return message.reply('Client not found.');
-      }
+  if (exactEmailMatch) {
+    const remaining = exactEmailMatch.sessions_total - exactEmailMatch.sessions_used;
 
-      const remaining = c.sessions_total - c.sessions_used;
+    return message.reply(
+`${exactEmailMatch.name}
+Phone: ${exactEmailMatch.phone || ''}
+Email: ${exactEmailMatch.email}
+Sessions Used: ${exactEmailMatch.sessions_used}/${exactEmailMatch.sessions_total}
+Sessions Remaining: ${remaining}
+Booked This Month: ${exactEmailMatch.booked_this_month}`
+    );
+  }
 
-      return message.reply(
+  const clients = await getAllClients();
+
+  const matches = clients.filter(c =>
+    (c.name && c.name.toLowerCase().includes(query)) ||
+    (c.email && c.email.toLowerCase().includes(query)) ||
+    (c.phone && c.phone.toLowerCase().includes(query))
+  );
+
+  if (matches.length === 0) {
+    return message.reply('Client not found.');
+  }
+
+  if (matches.length === 1) {
+    const c = matches[0];
+    const remaining = c.sessions_total - c.sessions_used;
+
+    return message.reply(
 `${c.name}
 Phone: ${c.phone || ''}
 Email: ${c.email}
 Sessions Used: ${c.sessions_used}/${c.sessions_total}
 Sessions Remaining: ${remaining}
 Booked This Month: ${c.booked_this_month}`
-      );
-    }
+    );
+  }
+
+  const limitedMatches = matches.slice(0, 10);
+  const text = limitedMatches.map(c => formatClientLine(c)).join('\n');
+
+  return message.reply(
+`Found ${matches.length} matching clients. Be more specific or use the exact email.
+Showing ${limitedMatches.length}:
+${text}`
+  );
+}
 
     if (command === '!book') {
       const email = args[1]?.toLowerCase();
@@ -337,22 +370,23 @@ Booked this month: ${updated.booked_this_month}`
       return message.reply('Monthly booking counts reset.');
     }
 
-    if (command === '!helpbot') {
-      return message.reply(
+   if (command === '!helpbot') {
+  return message.reply(
 `Commands:
 !addclient Name phone email@example.com totalSessions
 !listclients
 !listclients 10
 !searchclient name or email
 !client email@example.com
+!client partial name
 !book email@example.com April-18-2026 1:00PM
 !undosession email@example.com
 !setphone email@example.com 416-555-1234
 !setsessions email@example.com 6
 !removeclient email@example.com
 !resetmonth`
-      );
-    }
+  );
+}
   } catch (error) {
     console.error(error);
     return message.reply('Something went wrong.');
