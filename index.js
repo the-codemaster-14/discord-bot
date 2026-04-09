@@ -447,6 +447,50 @@ Sessions reset to 0/${updated.sessions_total}.`
 
       return message.reply('Monthly booking counts reset.');
     }
+    if (command === '!setused') {
+  const email = args[1]?.toLowerCase();
+  const used = Number(args[2]);
+
+  if (!email || Number.isNaN(used)) {
+    return message.reply('Usage: !setused email@example.com 1');
+  }
+
+  const c = await getClientByEmail(email);
+
+  if (!c) {
+    return message.reply('Client not found.');
+  }
+
+  const updated = await updateClientByEmail(email, {
+    sessions_used: Math.max(0, used)
+  });
+
+  return message.reply(
+`Updated ${updated.name} to ${updated.sessions_used}/${updated.sessions_total}`
+  );
+}
+    if (command === '!setbookedmonth') {
+  const email = args[1]?.toLowerCase();
+  const booked = Number(args[2]);
+
+  if (!email || Number.isNaN(booked)) {
+    return message.reply('Usage: !setbookedmonth email@example.com 1');
+  }
+
+  const c = await getClientByEmail(email);
+
+  if (!c) {
+    return message.reply('Client not found.');
+  }
+
+  const updated = await updateClientByEmail(email, {
+    booked_this_month: Math.max(0, booked)
+  });
+
+  return message.reply(
+`Updated ${updated.name} booked_this_month to ${updated.booked_this_month}`
+  );
+}
 
     if (command === '!helpbot') {
       return message.reply(
@@ -459,6 +503,8 @@ Sessions reset to 0/${updated.sessions_total}.`
 !searchclient name or email
 !client email@example.com
 !client partial name
+!setused email@example.com 1
+!setbookedmonth email@example.com 1
 !book email@example.com April-18-2026 1:00PM
 !undosession email@example.com
 !setphone email@example.com 416-555-1234
