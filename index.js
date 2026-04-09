@@ -27,7 +27,7 @@ async function getAllClients() {
   const { data, error } = await supabase
     .from('clients')
     .select('*')
-    .order('created_at', { ascending: true });
+    .order('name', { ascending: true });
 
   if (error) throw error;
   return data || [];
@@ -89,6 +89,11 @@ async function resetMonthlyCountsIfNeeded() {
   }
 }
 
+function formatClientLine(c) {
+  const remaining = c.sessions_total - c.sessions_used;
+  return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining} | This month: ${c.booked_this_month}`;
+}
+
 setInterval(async () => {
   try {
     await resetMonthlyCountsIfNeeded();
@@ -97,7 +102,7 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000);
 
-client.on('ready', async () => {
+client.once('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   try {
     await resetMonthlyCountsIfNeeded();
@@ -141,18 +146,50 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === '!listclients') {
+      const limit = Number(args[1]) || 20;
+      const safeLimit = Math.min(Math.max(limit, 1), 100);
+
       const clients = await getAllClients();
 
       if (clients.length === 0) {
         return message.reply('No clients yet.');
       }
 
-      const text = clients.map(c => {
-        const remaining = c.sessions_total - c.sessions_used;
-        return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining} | This month: ${c.booked_this_month}`;
-      }).join('\n');
+      const limitedClients = clients.slice(0, safeLimit);
+      const text = limitedClients.map(formatClientLine).join('\n');
 
-      return message.reply(text);
+      return message.reply(
+`Showing ${limitedClients.length} of ${clients.length} clients:
+${text}`
+      );
+    }
+
+    if (command === '!searchclient') {
+      const query = args.slice(1).join(' ').trim().toLowerCase();
+
+      if (!query) {
+        return message.reply('Usage: !searchclient name or email');
+      }
+
+      const clients = await getAllClients();
+
+      const matches = clients.filter(c =>
+        (c.name && c.name.toLowerCase().includes(query)) ||
+        (c.email && c.email.toLowerCase().includes(query)) ||
+        (c.phone && c.phone.toLowerCase().includes(query))
+      );
+
+      if (matches.length === 0) {
+        return message.reply('No matching clients found.');
+      }
+
+      const limitedMatches = matches.slice(0, 20);
+      const text = limitedMatches.map(formatClientLine).join('\n');
+
+      return message.reply(
+`Found ${matches.length} matching client(s). Showing ${limitedMatches.length}:
+${text}`
+      );
     }
 
     if (command === '!client') {
@@ -172,7 +209,7 @@ client.on('messageCreate', async (message) => {
 
       return message.reply(
 `${c.name}
-Phone: ${c.phone}
+Phone: ${c.phone || ''}
 Email: ${c.email}
 Sessions Used: ${c.sessions_used}/${c.sessions_total}
 Sessions Remaining: ${remaining}
@@ -207,7 +244,7 @@ Booked This Month: ${c.booked_this_month}`
 Sessions remaining: ${sessionsRemaining}
 
 Email: ${updated.email}
-Phone: ${updated.phone}
+Phone: ${updated.phone || ''}
 Booked this month: ${updated.booked_this_month}`
       );
     }
@@ -305,6 +342,8 @@ Booked this month: ${updated.booked_this_month}`
 `Commands:
 !addclient Name phone email@example.com totalSessions
 !listclients
+!listclients 10
+!searchclient name or email
 !client email@example.com
 !book email@example.com April-18-2026 1:00PM
 !undosession email@example.com
