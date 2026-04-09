@@ -137,6 +137,29 @@ client.on('messageCreate', async (message) => {
 
     const args = message.content.trim().split(' ');
     const command = args[0]?.toLowerCase();
+    if (command === '!inactiveclients') {
+  const limit = Number(args[1]) || 20;
+  const safeLimit = Math.min(Math.max(limit, 1), 100);
+
+  const clients = await getAllClients();
+  const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
+
+  if (inactive.length === 0) {
+    return message.reply('Everyone has booked this month.');
+  }
+
+  const limitedInactive = inactive.slice(0, safeLimit);
+
+  const text = limitedInactive.map(c => {
+    const remaining = c.sessions_total - c.sessions_used;
+    return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining}`;
+  }).join('\n');
+
+  return message.reply(
+`Showing ${limitedInactive.length} of ${inactive.length} clients with no bookings this month:
+${text}`
+  );
+}
 
     if (command === '!addclient') {
       const name = args[1];
@@ -429,6 +452,8 @@ Sessions reset to 0/${updated.sessions_total}.`
       return message.reply(
 `Commands:
 !addclient Name phone email@example.com totalSessions
+!inactiveclients
+!inactiveclients 20
 !listclients
 !listclients 10
 !searchclient name or email
