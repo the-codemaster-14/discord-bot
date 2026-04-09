@@ -15,6 +15,8 @@ const client = new Client({
   ]
 });
 
+const MONTHLY_REMINDERS_CHANNEL_ID = process.env.MONTHLY_REMINDERS_CHANNEL_ID || '';
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
 const supabase = createClient(
@@ -94,6 +96,152 @@ async function resetMonthlyCountsIfNeeded() {
       });
     }
   }
+}
+async function getBotMeta(key) {
+  const { data, error } = await supabase
+    .from('bot_meta')
+    .select('*')
+    .eq('meta_key', key)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function setBotMeta(key, value) {
+  const { error } = await supabase
+    .from('bot_meta')
+    .upsert([{
+      meta_key: key,
+      meta_value: value,
+      updated_at: new Date().toISOString()
+    }], { onConflict: 'meta_key' });
+
+  if (error) throw error;
+}
+
+function getTorontoDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Toronto',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+
+  const year = Number(parts.find(p => p.type === 'year')?.value);
+  const month = Number(parts.find(p => p.type === 'month')?.value);
+  const day = Number(parts.find(p => p.type === 'day')?.value);
+
+  return { year, month, day };
+}
+
+function getFridayBeforeLastWeek(year, month) {
+  // month is 1-12
+  const lastDay = new Date(Date.UTC(year, month, 0));
+  const lastDayWeekday = lastDay.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+
+  // Monday of the week containing the last day of the month
+  const mondayOffset = (lastDayWeekday + 6) % 7;
+  const mondayOfLastWeek = lastDay.getUTCDate() - mondayOffset;
+
+  // Friday before that week starts = Monday - 3 days
+  const target = new Date(Date.UTC(year, month - 1, mondayOfLastWeek - 3, 12));
+
+  return {
+    year: target.getUTCFullYear(),
+    month: target.getUTCMonth() + 1,
+    day: target.getUTCDate()
+  };
+}
+
+function sameDateParts(a, b) {
+  return a.year === b.year && a.month === b.month && a.day === b.day;
+}
+
+async function sendMonthlyInactiveReminder() {
+  if (!MONTHLY_REMINDERS_CHANNEL_ID) return false;
+
+  const today = getTorontoDateParts();
+  const target = getFridayBeforeLastWeek(today.year, today.month);
+
+  if (!sameDateParts(today, target)) {
+    return false;
+  }
+
+  const monthKey = `${today.year}-${String(today.month).padStart(2, '0')}`;
+  const alreadySent = await getBotMeta('monthly_inactive_reminder_last_sent');
+
+  if (alreadySent?.meta_value === monthKey) {
+    return false;
+  }
+
+  const clients = await getAllClients();
+  const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
+
+  const channel = await client.channels.fetch(MONTHLY_REMINDERS_CHANNEL_ID).catch(() => null);
+
+  if (!channel || !channel.isTextBased()) {
+    return false;
+  }
+
+  const preview = inactive.slice(0, 50).map(c => {
+    const remaining = c.sessions_total - c.sessions_used;
+    return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining}`;
+  }).join('\n');
+
+  const csv = buildCsv(inactive);
+  const buffer = Buffer.from(csv, 'utf-8');
+  const attachment = new AttachmentBuilder(buffer, {
+    name: `inactive-clients-${monthKey}.csv`
+  });
+
+  await channel.send({
+    content: inactive.length === 0
+      ? `📌 Monthly reminder: everyone has booked for ${monthKey}.`
+      : `📌 Monthly reminder: ${inactive.length} client(s) have not booked for ${monthKey}.\n\nShowing first ${Math.min(inactive.length, 50)}:\n${preview}`,
+    files: [attachment]
+  });
+
+  await setBotMeta('monthly_inactive_reminder_last_sent', monthKey);
+  return true;
+}
+
+async function forceSendMonthlyInactiveReminder() {
+  if (!MONTHLY_REMINDERS_CHANNEL_ID) {
+    return false;
+  }
+
+  const today = getTorontoDateParts();
+  const monthKey = `${today.year}-${String(today.month).padStart(2, '0')}`;
+
+  const clients = await getAllClients();
+  const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
+
+  const channel = await client.channels.fetch(MONTHLY_REMINDERS_CHANNEL_ID).catch(() => null);
+
+  if (!channel || !channel.isTextBased()) {
+    return false;
+  }
+
+  const preview = inactive.slice(0, 50).map(c => {
+    const remaining = c.sessions_total - c.sessions_used;
+    return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining}`;
+  }).join('\n');
+
+  const csv = buildCsv(inactive);
+  const buffer = Buffer.from(csv, 'utf-8');
+  const attachment = new AttachmentBuilder(buffer, {
+    name: `inactive-clients-${monthKey}.csv`
+  });
+
+  await channel.send({
+    content: inactive.length === 0
+      ? `📌 Manual monthly reminder test: everyone has booked for ${monthKey}.`
+      : `📌 Manual monthly reminder test: ${inactive.length} client(s) have not booked for ${monthKey}.\n\nShowing first ${Math.min(inactive.length, 50)}:\n${preview}`,
+    files: [attachment]
+  });
+
+  return true;
 }
 
 function formatClientLine(c) {
@@ -676,6 +824,7 @@ client.once('clientReady', async () => {
 
   try {
     await resetMonthlyCountsIfNeeded();
+    await sendMonthlyInactiveReminder();
     await client.application.commands.set(slashCommands);
     console.log('Slash commands registered');
   } catch (error) {
@@ -686,8 +835,9 @@ client.once('clientReady', async () => {
 setInterval(async () => {
   try {
     await resetMonthlyCountsIfNeeded();
+    await sendMonthlyInactiveReminder();
   } catch (error) {
-    console.error('Monthly reset error:', error);
+    console.error('Monthly scheduled task error:', error);
   }
 }, 60 * 60 * 1000);
 
@@ -695,6 +845,15 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (!message.content.trim().startsWith('!')) return;
 
+  if (command === '!monthlyreminder') {
+  const sent = await forceSendMonthlyInactiveReminder();
+
+  if (!sent) {
+    return message.reply('Could not send monthly reminder. Check MONTHLY_REMINDERS_CHANNEL_ID.');
+  }
+
+  return message.reply('Monthly reminder sent to the monthly reminders channel.');
+}
   try {
     await resetMonthlyCountsIfNeeded();
 
@@ -726,6 +885,7 @@ client.on('messageCreate', async (message) => {
 !setnote email@example.com your note here
 !note email@example.com
 !exportcsv
+!monthlyreminder
 !removeclient email@example.com confirm
 !resetmonth confirm
 
