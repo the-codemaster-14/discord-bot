@@ -845,6 +845,12 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (!message.content.trim().startsWith('!')) return;
 
+  try {
+    await resetMonthlyCountsIfNeeded();
+
+    const args = message.content.trim().split(' ');
+    const command = args[0]?.toLowerCase();
+
   if (command === '!monthlyreminder') {
   const sent = await forceSendMonthlyInactiveReminder();
 
@@ -854,11 +860,6 @@ client.on('messageCreate', async (message) => {
 
   return message.reply('Monthly reminder sent to the monthly reminders channel.');
 }
-  try {
-    await resetMonthlyCountsIfNeeded();
-
-    const args = message.content.trim().split(' ');
-    const command = args[0]?.toLowerCase();
 
     if (command === '!helpbot') {
       return message.reply(
