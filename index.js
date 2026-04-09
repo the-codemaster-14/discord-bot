@@ -37,7 +37,7 @@ async function getClientByEmail(email) {
   const { data, error } = await supabase
     .from('clients')
     .select('*')
-    .eq('email', email)
+    .eq('email', email.toLowerCase())
     .maybeSingle();
 
   if (error) throw error;
@@ -50,7 +50,7 @@ async function addClient({ name, phone, email, sessions_total }) {
     .insert([{
       name,
       phone,
-      email,
+      email: email.toLowerCase(),
       sessions_used: 0,
       sessions_total,
       booked_this_month: 0,
@@ -67,7 +67,7 @@ async function updateClientByEmail(email, updates) {
   const { data, error } = await supabase
     .from('clients')
     .update(updates)
-    .eq('email', email)
+    .eq('email', email.toLowerCase())
     .select()
     .single();
 
@@ -92,6 +92,24 @@ async function resetMonthlyCountsIfNeeded() {
 function formatClientLine(c) {
   const remaining = c.sessions_total - c.sessions_used;
   return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining} | This month: ${c.booked_this_month}`;
+}
+
+function getUsageStatusMessage(c) {
+  const remaining = c.sessions_total - c.sessions_used;
+
+  if (c.sessions_used > c.sessions_total) {
+    return `❌ Over limit. This client is at ${c.sessions_used}/${c.sessions_total}.`;
+  }
+
+  if (c.sessions_used === c.sessions_total) {
+    return `❗ Limit reached. This client is at ${c.sessions_used}/${c.sessions_total}.`;
+  }
+
+  if (c.sessions_used === c.sessions_total - 1) {
+    return `⚠ Renewal soon. This client is at ${c.sessions_used}/${c.sessions_total}.`;
+  }
+
+  return `Sessions remaining: ${remaining}`;
 }
 
 setInterval(async () => {
@@ -192,63 +210,65 @@ ${text}`
       );
     }
 
-   if (command === '!client') {
-  const query = args.slice(1).join(' ').trim().toLowerCase();
+    if (command === '!client') {
+      const query = args.slice(1).join(' ').trim().toLowerCase();
 
-  if (!query) {
-    return message.reply('Usage: !client email@example.com or !client partial name');
-  }
+      if (!query) {
+        return message.reply('Usage: !client email@example.com or !client partial name');
+      }
 
-  const exactEmailMatch = await getClientByEmail(query);
+      const exactEmailMatch = await getClientByEmail(query);
 
-  if (exactEmailMatch) {
-    const remaining = exactEmailMatch.sessions_total - exactEmailMatch.sessions_used;
+      if (exactEmailMatch) {
+        const remaining = exactEmailMatch.sessions_total - exactEmailMatch.sessions_used;
 
-    return message.reply(
+        return message.reply(
 `${exactEmailMatch.name}
 Phone: ${exactEmailMatch.phone || ''}
 Email: ${exactEmailMatch.email}
 Sessions Used: ${exactEmailMatch.sessions_used}/${exactEmailMatch.sessions_total}
 Sessions Remaining: ${remaining}
-Booked This Month: ${exactEmailMatch.booked_this_month}`
-    );
-  }
+Booked This Month: ${exactEmailMatch.booked_this_month}
+${getUsageStatusMessage(exactEmailMatch)}`
+        );
+      }
 
-  const clients = await getAllClients();
+      const clients = await getAllClients();
 
-  const matches = clients.filter(c =>
-    (c.name && c.name.toLowerCase().includes(query)) ||
-    (c.email && c.email.toLowerCase().includes(query)) ||
-    (c.phone && c.phone.toLowerCase().includes(query))
-  );
+      const matches = clients.filter(c =>
+        (c.name && c.name.toLowerCase().includes(query)) ||
+        (c.email && c.email.toLowerCase().includes(query)) ||
+        (c.phone && c.phone.toLowerCase().includes(query))
+      );
 
-  if (matches.length === 0) {
-    return message.reply('Client not found.');
-  }
+      if (matches.length === 0) {
+        return message.reply('Client not found.');
+      }
 
-  if (matches.length === 1) {
-    const c = matches[0];
-    const remaining = c.sessions_total - c.sessions_used;
+      if (matches.length === 1) {
+        const c = matches[0];
+        const remaining = c.sessions_total - c.sessions_used;
 
-    return message.reply(
+        return message.reply(
 `${c.name}
 Phone: ${c.phone || ''}
 Email: ${c.email}
 Sessions Used: ${c.sessions_used}/${c.sessions_total}
 Sessions Remaining: ${remaining}
-Booked This Month: ${c.booked_this_month}`
-    );
-  }
+Booked This Month: ${c.booked_this_month}
+${getUsageStatusMessage(c)}`
+        );
+      }
 
-  const limitedMatches = matches.slice(0, 10);
-  const text = limitedMatches.map(c => formatClientLine(c)).join('\n');
+      const limitedMatches = matches.slice(0, 10);
+      const text = limitedMatches.map(c => formatClientLine(c)).join('\n');
 
-  return message.reply(
+      return message.reply(
 `Found ${matches.length} matching clients. Be more specific or use the exact email.
 Showing ${limitedMatches.length}:
 ${text}`
-  );
-}
+      );
+    }
 
     if (command === '!book') {
       const email = args[1]?.toLowerCase();
@@ -265,6 +285,13 @@ ${text}`
         return message.reply('Client not found.');
       }
 
+      if (c.sessions_used >= c.sessions_total) {
+        return message.reply(
+`❌ Booking blocked.
+${c.name} is already at ${c.sessions_used}/${c.sessions_total}. Renew them first if needed.`
+        );
+      }
+
       const updated = await updateClientByEmail(email, {
         sessions_used: c.sessions_used + 1,
         booked_this_month: c.booked_this_month + 1
@@ -278,7 +305,8 @@ Sessions remaining: ${sessionsRemaining}
 
 Email: ${updated.email}
 Phone: ${updated.phone || ''}
-Booked this month: ${updated.booked_this_month}`
+Booked this month: ${updated.booked_this_month}
+${getUsageStatusMessage(updated)}`
       );
     }
 
@@ -339,6 +367,33 @@ Booked this month: ${updated.booked_this_month}`
       return message.reply(`Updated total sessions for ${c.name} to ${total}`);
     }
 
+    if (command === '!renewclient') {
+      const email = args[1]?.toLowerCase();
+      const total = Number(args[2] || 6);
+
+      if (!email || Number.isNaN(total)) {
+        return message.reply('Usage: !renewclient email@example.com 6');
+      }
+
+      const c = await getClientByEmail(email);
+
+      if (!c) {
+        return message.reply('Client not found.');
+      }
+
+      const updated = await updateClientByEmail(email, {
+        sessions_used: 0,
+        sessions_total: total,
+        booked_this_month: 0,
+        last_reset_month: currentMonthKey()
+      });
+
+      return message.reply(
+`✅ Renewed ${updated.name}.
+Sessions reset to 0/${updated.sessions_total}.`
+      );
+    }
+
     if (command === '!removeclient') {
       const email = args[1]?.toLowerCase();
 
@@ -370,8 +425,8 @@ Booked this month: ${updated.booked_this_month}`
       return message.reply('Monthly booking counts reset.');
     }
 
-   if (command === '!helpbot') {
-  return message.reply(
+    if (command === '!helpbot') {
+      return message.reply(
 `Commands:
 !addclient Name phone email@example.com totalSessions
 !listclients
@@ -383,10 +438,11 @@ Booked this month: ${updated.booked_this_month}`
 !undosession email@example.com
 !setphone email@example.com 416-555-1234
 !setsessions email@example.com 6
+!renewclient email@example.com 6
 !removeclient email@example.com
 !resetmonth`
-  );
-}
+      );
+    }
   } catch (error) {
     console.error(error);
     return message.reply('Something went wrong.');
