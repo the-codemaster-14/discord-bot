@@ -184,16 +184,27 @@ async function sendMonthlyInactiveReminder() {
     return false;
   }
 
-  const preview = inactive.slice(0, 50).map(c => {
-    const remaining = c.sessions_total - c.sessions_used;
-    return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining}`;
-  }).join('\n');
+ const preview = inactive.slice(0, 15).map(c => {
+  const remaining = c.sessions_total - c.sessions_used;
+  return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining}`;
+}).join('\n');
 
-  const csv = buildCsv(inactive);
-  const buffer = Buffer.from(csv, 'utf-8');
-  const attachment = new AttachmentBuilder(buffer, {
-    name: `inactive-clients-${monthKey}.csv`
-  });
+const csv = buildCsv(inactive);
+const buffer = Buffer.from(csv, 'utf-8');
+const attachment = new AttachmentBuilder(buffer, {
+  name: `inactive-clients-${monthKey}.csv`
+});
+
+await channel.send({
+  content: inactive.length === 0
+    ? `📌 Monthly reminder: everyone has booked for ${monthKey}.`
+    : `📌 Monthly reminder: ${inactive.length} client(s) have not booked for ${monthKey}.
+Attached: full CSV.
+
+Showing first ${Math.min(inactive.length, 15)}:
+${preview}`,
+  files: [attachment]
+});
 
   await channel.send({
     content: inactive.length === 0
@@ -223,16 +234,16 @@ async function forceSendMonthlyInactiveReminder() {
     return false;
   }
 
-  const preview = inactive.slice(0, 50).map(c => {
-    const remaining = c.sessions_total - c.sessions_used;
-    return `${c.name} | ${c.email} | Used: ${c.sessions_used}/${c.sessions_total} | Remaining: ${remaining}`;
-  }).join('\n');
+await channel.send({
+  content: inactive.length === 0
+    ? `📌 Manual monthly reminder test: everyone has booked for ${monthKey}.`
+    : `📌 Manual monthly reminder test: ${inactive.length} client(s) have not booked for ${monthKey}.
+Attached: full CSV.
 
-  const csv = buildCsv(inactive);
-  const buffer = Buffer.from(csv, 'utf-8');
-  const attachment = new AttachmentBuilder(buffer, {
-    name: `inactive-clients-${monthKey}.csv`
-  });
+Showing first ${Math.min(inactive.length, 15)}:
+${preview}`,
+  files: [attachment]
+});
 
   await channel.send({
     content: inactive.length === 0
