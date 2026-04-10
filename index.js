@@ -44,6 +44,63 @@ function appendNote(existingNotes, newLine) {
   return `${existing}\n${line}`;
 }
 
+function parseBookingDate(dateText) {
+  const value = String(dateText || '').trim();
+  if (!value) return null;
+
+  const isoMatch = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    const parsed = new Date(year, month - 1, day);
+
+    if (
+      parsed.getFullYear() === year &&
+      parsed.getMonth() === month - 1 &&
+      parsed.getDate() === day
+    ) {
+      return parsed;
+    }
+  }
+
+  const slashMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    const month = Number(slashMatch[1]);
+    const day = Number(slashMatch[2]);
+    const year = Number(slashMatch[3]);
+    const parsed = new Date(year, month - 1, day);
+
+    if (
+      parsed.getFullYear() === year &&
+      parsed.getMonth() === month - 1 &&
+      parsed.getDate() === day
+    ) {
+      return parsed;
+    }
+  }
+
+  const normalized = value.replace(/-/g, ' ');
+  const parsed = new Date(normalized);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function monthKeyFromDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function monthKeyFromBookingDate(dateText) {
+  const parsed = parseBookingDate(dateText);
+  return parsed ? monthKeyFromDate(parsed) : null;
+}
+
 function getTorontoDateParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Toronto',
@@ -217,20 +274,6 @@ async function updateClientByEmail(email, updates) {
   return data;
 }
 
-async function resetMonthlyCountsIfNeeded() {
-  const clients = await getAllClients();
-  const thisMonth = currentMonthKey();
-
-  for (const c of clients) {
-    if (c.last_reset_month !== thisMonth) {
-      await updateClientByEmail(c.email, {
-        booked_this_month: 0,
-        last_reset_month: thisMonth
-      });
-    }
-  }
-}
-
 async function getBotMeta(key) {
   const { data, error } = await supabase
     .from('bot_meta')
@@ -254,6 +297,154 @@ async function setBotMeta(key, value) {
   if (error) throw error;
 }
 
+async function getScheduledBookingsByEmail(email) {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('*')
+    .eq('client_email', normalizeText(email))
+    .eq('status', 'scheduled')
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+}
+
+async function findScheduledBookingByDateTime(email, bookingDate, bookingTime) {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('*')
+    .eq('client_email', normalizeText(email))
+    .eq('booking_date', bookingDate)
+    .eq('booking_time', bookingTime)
+    .eq('status', 'scheduled')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+  return (data || [])[0] || null;
+}
+
+async function addBooking({ client_email, booking_date, booking_time }) {
+  const bookingMonth = monthKeyFromBookingDate(booking_date);
+
+  if (!bookingMonth) {
+    throw new Error('Invalid booking date');
+  }
+
+  const { data, error } = await supabase
+    .from('bookings')
+    .insert([{
+      client_email: normalizeText(client_email),
+      booking_date,
+      booking_time,
+      booking_month: bookingMonth,
+      status: 'scheduled'
+    }])
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function cancelLatestScheduledBooking(email) {
+  const bookings = await getScheduledBookingsByEmail(email);
+  const latest = bookings[0];
+
+  if (!latest) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from('bookings')
+    .update({
+      status: 'cancelled',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', latest.id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function cancelScheduledBooking(email, bookingDate, bookingTime) {
+  const booking = await findScheduledBookingByDateTime(email, bookingDate, bookingTime);
+
+  if (!booking) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from('bookings')
+    .update({
+      status: 'cancelled',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', booking.id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function rescheduleScheduledBooking(email, oldDate, oldTime, newDate, newTime) {
+  const booking = await findScheduledBookingByDateTime(email, oldDate, oldTime);
+
+  if (!booking) {
+    return null;
+  }
+
+  const newMonth = monthKeyFromBookingDate(newDate);
+  if (!newMonth) {
+    throw new Error('Invalid new booking date');
+  }
+
+  const { data, error } = await supabase
+    .from('bookings')
+    .update({
+      booking_date: newDate,
+      booking_time: newTime,
+      booking_month: newMonth,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', booking.id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function syncClientBookedThisMonth(email) {
+  const normalizedEmail = normalizeText(email);
+  const thisMonth = currentMonthKey();
+
+  const { count, error } = await supabase
+    .from('bookings')
+    .select('*', { count: 'exact', head: true })
+    .eq('client_email', normalizedEmail)
+    .eq('status', 'scheduled')
+    .eq('booking_month', thisMonth);
+
+  if (error) throw error;
+
+  return updateClientByEmail(normalizedEmail, {
+    booked_this_month: count || 0,
+    last_reset_month: thisMonth
+  });
+}
+
+async function resetMonthlyCountsIfNeeded() {
+  const clients = await getAllClients();
+
+  for (const c of clients) {
+    await syncClientBookedThisMonth(c.email);
+  }
+}
+
 async function sendMonthlyInactiveReminder() {
   if (!MONTHLY_REMINDERS_CHANNEL_ID) return false;
 
@@ -266,6 +457,8 @@ async function sendMonthlyInactiveReminder() {
   const alreadySent = await getBotMeta('monthly_inactive_reminder_last_sent');
 
   if (alreadySent?.meta_value === monthKey) return false;
+
+  await resetMonthlyCountsIfNeeded();
 
   const clients = await getAllClients();
   const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
@@ -296,6 +489,8 @@ async function sendMonthlyInactiveReminder() {
 
 async function forceSendMonthlyInactiveReminder() {
   if (!MONTHLY_REMINDERS_CHANNEL_ID) return false;
+
+  await resetMonthlyCountsIfNeeded();
 
   const today = getTorontoDateParts();
   const monthKey = `${today.year}-${String(today.month).padStart(2, '0')}`;
@@ -582,6 +777,8 @@ async function handleClient(target, query) {
 }
 
 async function handleInactiveClients(target, limit = 20, page = 1) {
+  await resetMonthlyCountsIfNeeded();
+
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
 
@@ -648,6 +845,10 @@ async function handleBook(target, email, bookingDate, bookingTime) {
     return replyText(target, 'Usage: !book email@example.com April-18-2026 1:00PM');
   }
 
+  if (!monthKeyFromBookingDate(bookingDate)) {
+    return replyText(target, 'Invalid booking date. Use something like 2026-05-15, 5/15/2026, or April-18-2026.');
+  }
+
   const c = await getClientByEmail(normalizedEmail);
   if (!c) return replyText(target, 'Client not found.');
 
@@ -658,12 +859,18 @@ async function handleBook(target, email, bookingDate, bookingTime) {
     );
   }
 
-  const updated = await updateClientByEmail(normalizedEmail, {
+  await updateClientByEmail(normalizedEmail, {
     sessions_used: c.sessions_used + 1,
-    booked_this_month: c.booked_this_month + 1,
     notes: appendNote(c.notes, `Booked: ${bookingDate} ${bookingTime}`)
   });
 
+  await addBooking({
+    client_email: normalizedEmail,
+    booking_date: bookingDate,
+    booking_time: bookingTime
+  });
+
+  const updated = await syncClientBookedThisMonth(normalizedEmail);
   await sendBookingTrackerMessage(
     `Booking scheduled: ${updated.name} (${updated.email}) booked ${bookingDate} at ${bookingTime}.`
   );
@@ -693,15 +900,21 @@ async function handleCancelBooking(target, email, bookingDate, bookingTime, reas
   const c = await getClientByEmail(normalizedEmail);
   if (!c) return replyText(target, 'Client not found.');
 
+  const cancelled = await cancelScheduledBooking(normalizedEmail, bookingDate, bookingTime);
+  if (!cancelled) {
+    return replyText(target, 'No matching scheduled booking was found for that client/date/time.');
+  }
+
   const noteLine = cleanReason
     ? `Cancelled: ${bookingDate} ${bookingTime} | Reason: ${cleanReason}`
     : `Cancelled: ${bookingDate} ${bookingTime}`;
 
-  const updated = await updateClientByEmail(normalizedEmail, {
+  await updateClientByEmail(normalizedEmail, {
     sessions_used: Math.max(0, c.sessions_used - 1),
-    booked_this_month: Math.max(0, c.booked_this_month - 1),
     notes: appendNote(c.notes, noteLine)
   });
+
+  const updated = await syncClientBookedThisMonth(normalizedEmail);
 
   await sendBookingTrackerMessage(
     cleanReason
@@ -723,12 +936,23 @@ async function handleRescheduleBooking(target, email, oldDate, oldTime, newDate,
     return replyText(target, 'Usage: !reschedulebooking email@example.com oldDate oldTime newDate newTime');
   }
 
+  if (!monthKeyFromBookingDate(newDate)) {
+    return replyText(target, 'Invalid new booking date. Use something like 2026-05-15, 5/15/2026, or April-18-2026.');
+  }
+
   const c = await getClientByEmail(normalizedEmail);
   if (!c) return replyText(target, 'Client not found.');
 
-  const updated = await updateClientByEmail(normalizedEmail, {
+  const moved = await rescheduleScheduledBooking(normalizedEmail, oldDate, oldTime, newDate, newTime);
+  if (!moved) {
+    return replyText(target, 'No matching scheduled booking was found for that client/date/time.');
+  }
+
+  await updateClientByEmail(normalizedEmail, {
     notes: appendNote(c.notes, `Rescheduled: ${oldDate} ${oldTime} -> ${newDate} ${newTime}`)
   });
+
+  const updated = await syncClientBookedThisMonth(normalizedEmail);
 
   await sendBookingTrackerMessage(
     `Booking rescheduled: ${updated.name} (${updated.email}) moved from ${oldDate} at ${oldTime} to ${newDate} at ${newTime}.`
@@ -736,7 +960,8 @@ async function handleRescheduleBooking(target, email, oldDate, oldTime, newDate,
 
   return replyText(
     target,
-    `Rescheduled booking for ${updated.name} from ${oldDate} ${oldTime} to ${newDate} ${newTime}.`
+    `Rescheduled booking for ${updated.name} from ${oldDate} ${oldTime} to ${newDate} ${newTime}.
+Booked this month: ${updated.booked_this_month}`
   );
 }
 
@@ -747,11 +972,16 @@ async function handleUndoSession(target, email) {
   const c = await getClientByEmail(normalizedEmail);
   if (!c) return replyText(target, 'Client not found.');
 
-  const updated = await updateClientByEmail(normalizedEmail, {
-    sessions_used: Math.max(0, c.sessions_used - 1),
-    booked_this_month: Math.max(0, c.booked_this_month - 1)
+  const cancelled = await cancelLatestScheduledBooking(normalizedEmail);
+  if (!cancelled) {
+    return replyText(target, 'No scheduled booking was found to undo.');
+  }
+
+  await updateClientByEmail(normalizedEmail, {
+    sessions_used: Math.max(0, c.sessions_used - 1)
   });
 
+  const updated = await syncClientBookedThisMonth(normalizedEmail);
   return replyText(target, `Removed one booking/session from ${updated.name}`);
 }
 
@@ -786,22 +1016,18 @@ async function handleSetUsed(target, email, used) {
   return replyText(target, `Updated ${updated.name} to ${updated.sessions_used}/${updated.sessions_total}`);
 }
 
-async function handleSetBookedMonth(target, email, booked) {
+async function handleSetBookedMonth(target, email) {
   const normalizedEmail = normalizeText(email);
-  const numericBooked = Number(booked);
 
-  if (!normalizedEmail || Number.isNaN(numericBooked)) {
-    return replyText(target, 'Usage: !setbookedmonth email@example.com 1');
+  if (!normalizedEmail) {
+    return replyText(target, 'Usage: !setbookedmonth email@example.com');
   }
 
   const c = await getClientByEmail(normalizedEmail);
   if (!c) return replyText(target, 'Client not found.');
 
-  const updated = await updateClientByEmail(normalizedEmail, {
-    booked_this_month: Math.max(0, numericBooked)
-  });
-
-  return replyText(target, `Updated ${updated.name} booked_this_month to ${updated.booked_this_month}`);
+  const updated = await syncClientBookedThisMonth(normalizedEmail);
+  return replyText(target, `Recalculated ${updated.name} booked_this_month to ${updated.booked_this_month}`);
 }
 
 async function handleSetTotal(target, email, total) {
@@ -836,9 +1062,10 @@ async function handleRenewClient(target, email, total = 6) {
   const updated = await updateClientByEmail(normalizedEmail, {
     sessions_used: 0,
     sessions_total: numericTotal,
-    booked_this_month: 0,
     last_reset_month: currentMonthKey()
   });
+
+  await syncClientBookedThisMonth(normalizedEmail);
 
   return replyText(target, `Renewed ${updated.name}. Sessions reset to 0/${updated.sessions_total}.`);
 }
@@ -913,17 +1140,8 @@ async function handleResetMonth(target, confirmWord) {
     return replyText(target, 'Usage: !resetmonth confirm');
   }
 
-  const clients = await getAllClients();
-  const thisMonth = currentMonthKey();
-
-  for (const c of clients) {
-    await updateClientByEmail(c.email, {
-      booked_this_month: 0,
-      last_reset_month: thisMonth
-    });
-  }
-
-  return replyText(target, 'Monthly booking counts reset.');
+  await resetMonthlyCountsIfNeeded();
+  return replyText(target, 'Monthly booking counts synchronized from scheduled bookings.');
 }
 
 async function handleTrackedAccounts(target, tier = '') {
@@ -1157,9 +1375,8 @@ const slashCommands = [
 
   new SlashCommandBuilder()
     .setName('setbookedmonth')
-    .setDescription('Set booked_this_month exactly')
-    .addStringOption(o => o.setName('email').setDescription('Client email').setRequired(true))
-    .addIntegerOption(o => o.setName('count').setDescription('Booked this month').setRequired(true)),
+    .setDescription('Recalculate booked_this_month from scheduled bookings')
+    .addStringOption(o => o.setName('email').setDescription('Client email').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('settotal')
@@ -1278,7 +1495,7 @@ client.on('messageCreate', async (message) => {
 !undosession email@example.com
 !setphone email@example.com 416-555-1234
 !setused email@example.com 1
-!setbookedmonth email@example.com 1
+!setbookedmonth email@example.com
 !setsessions email@example.com 6
 !settotal email@example.com 6
 !renewclient email@example.com 6
@@ -1313,7 +1530,7 @@ Trend commands:
     if (command === '!undosession') return handleUndoSession(message, args[1]);
     if (command === '!setphone') return handleSetPhone(message, args[1], args[2]);
     if (command === '!setused') return handleSetUsed(message, args[1], args[2]);
-    if (command === '!setbookedmonth') return handleSetBookedMonth(message, args[1], args[2]);
+    if (command === '!setbookedmonth') return handleSetBookedMonth(message, args[1]);
     if (command === '!setsessions' || command === '!settotal') return handleSetTotal(message, args[1], args[2]);
     if (command === '!renewclient') return handleRenewClient(message, args[1], args[2]);
     if (command === '!setnote') return handleSetNote(message, args[1], args.slice(2).join(' '));
@@ -1397,8 +1614,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'setbookedmonth') {
       return handleSetBookedMonth(
         interaction,
-        interaction.options.getString('email', true),
-        interaction.options.getInteger('count', true)
+        interaction.options.getString('email', true)
       );
     }
 
@@ -1475,3 +1691,24 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 client.login(BOT_TOKEN);
+You also need this SQL in Supabase before deploying:
+
+create table if not exists bookings (
+  id bigint generated always as identity primary key,
+  client_email text not null,
+  booking_date text not null,
+  booking_time text not null,
+  booking_month text not null,
+  status text not null default 'scheduled',
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_bookings_client_email
+  on bookings(client_email);
+
+create index if not exists idx_bookings_booking_month
+  on bookings(booking_month);
+
+create index if not exists idx_bookings_status
+  on bookings(status);
