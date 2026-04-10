@@ -1441,7 +1441,6 @@ client.once('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   try {
-    await resetMonthlyCountsIfNeeded();
     await sendMonthlyInactiveReminder();
     await client.application.commands.set(slashCommands);
     console.log('Slash commands registered');
@@ -1556,7 +1555,6 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   try {
-    await resetMonthlyCountsIfNeeded();
 
     if (interaction.commandName === 'client') {
       return handleClient(interaction, interaction.options.getString('query', true));
