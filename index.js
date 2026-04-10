@@ -422,17 +422,17 @@ async function syncClientBookedThisMonth(email) {
   const normalizedEmail = normalizeText(email);
   const thisMonth = currentMonthKey();
 
-  const { count, error } = await supabase
+  const { data, error } = await supabase
     .from('bookings')
-    .select('*', { count: 'exact', head: true })
+    .select('status')
     .eq('client_email', normalizedEmail)
-    .eq('status', 'scheduled')
-    .eq('booking_month', thisMonth);
+    .eq('booking_month', thisMonth)
+    .in('status', ['scheduled', 'completed']);
 
   if (error) throw error;
 
   return updateClientByEmail(normalizedEmail, {
-    booked_this_month: count || 0,
+    booked_this_month: (data || []).length,
     last_reset_month: thisMonth
   });
 }
