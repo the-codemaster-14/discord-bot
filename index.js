@@ -1070,24 +1070,16 @@ async function handleTrackedAccounts(target, tier = '') {
   const lines = accounts.map(a => {
     const handle = a.username ? `@${a.username}` : '(no username)';
 
-    let tagsText = '';
+    let tagsText = 'None';
     if (Array.isArray(a.tags)) {
       tagsText = a.tags.join(', ');
     } else if (typeof a.tags === 'string') {
       tagsText = a.tags;
-    } else {
-      tagsText = 'None';
+    } else if (a.tags && typeof a.tags === 'object') {
+      tagsText = Object.values(a.tags).join(', ');
     }
 
     return `${a.tier} | ${a.name} | ${handle} | Tags: ${tagsText}`;
-  });
-
-  return replyText(target, lines.join('\n'));
-}
-
-  const lines = accounts.map(a => {
-    const handle = a.username ? `@${a.username}` : '(no username)';
-    return `${a.tier} | ${a.name} | ${handle} | Tags: ${(a.tags || []).join(', ')}`;
   });
 
   return replyText(target, lines.join('\n'));
