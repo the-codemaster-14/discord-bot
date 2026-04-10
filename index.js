@@ -705,7 +705,9 @@ function buildCsv(clients) {
 }
 
 async function replyText(target, content) {
-  if ('author' in target) return target.reply(content);
+  if ('author' in target) {
+    return target.channel.send({ content });
+  }
 
   if (target.replied || target.deferred) {
     return target.followUp({ content });
@@ -1546,7 +1548,7 @@ Trend commands:
     if (command === '!trendideas') return handleTrendIdeas(message);
   } catch (error) {
     console.error(error);
-    return message.reply('Something went wrong.');
+    return message.channel.send({ content: 'Something went wrong.' });
   }
 });
 
