@@ -113,70 +113,22 @@ function classifyTopic(text) {
   const normalized = normalizeText(text);
 
   const topicRules = [
-    {
-      topic: 'First-time buyers',
-      keywords: ['first-time buyer', 'first time buyer', 'buying my first home', 'buy your first home', 'down payment', 'starter home', 'first home']
-    },
-    {
-      topic: 'Interest rates',
-      keywords: ['interest rate', 'interest rates', 'mortgage rate', 'mortgage rates', 'bank of canada', 'rate cut', 'rate hold', 'variable rate', 'fixed rate']
-    },
-    {
-      topic: 'Market updates',
-      keywords: ['market update', 'market crash', 'housing market', 'toronto market', 'gta market', 'inventory', 'benchmark price', 'average price', 'sales data']
-    },
-    {
-      topic: 'Home staging',
-      keywords: ['staging', 'home staging', 'declutter', 'prepare your home', 'staged to sell']
-    },
-    {
-      topic: 'Seller tips',
-      keywords: ['seller tip', 'selling your home', 'sell your home', 'listing prep', 'how to sell', 'seller mistakes']
-    },
-    {
-      topic: 'Buyer mistakes',
-      keywords: ['buyer mistakes', 'mistakes buyers make', 'what buyers get wrong', 'buyers forget', 'buying mistake']
-    },
-    {
-      topic: 'Open house tips',
-      keywords: ['open house', 'open houses', 'hosting an open house']
-    },
-    {
-      topic: 'Area guides',
-      keywords: ['neighbourhood', 'neighborhood', 'living in', 'moving to', 'best area', 'best neighbourhood', 'area guide']
-    },
-    {
-      topic: 'Luxury listings',
-      keywords: ['luxury listing', 'luxury real estate', 'luxury home', 'million dollar listing', 'waterfront estate']
-    },
-    {
-      topic: 'Condos vs houses',
-      keywords: ['condo vs house', 'condo or house', 'condo vs freehold', 'freehold vs condo']
-    },
-    {
-      topic: 'Investing / rentals',
-      keywords: ['investment property', 'rental property', 'cash flow', 'investor', 'real estate investing', 'landlord']
-    },
-    {
-      topic: 'Closing costs',
-      keywords: ['closing costs', 'hidden costs', 'costs of buying', 'land transfer tax', 'legal fees', 'closing expenses']
-    },
-    {
-      topic: 'Mortgage tips',
-      keywords: ['mortgage tip', 'mortgage approval', 'pre-approval', 'pre approval', 'amortization', 'stress test']
-    },
-    {
-      topic: 'Renovation / value add',
-      keywords: ['renovation', 'before and after', 'value add', 'increase value', 'upgrade your home']
-    },
-    {
-      topic: 'Realtor behind-the-scenes',
-      keywords: ['behind the scenes', 'day in the life', 'realtor life', 'showing day', 'listing day']
-    },
-    {
-      topic: 'Client testimonials',
-      keywords: ['testimonial', 'happy client', 'client story', 'success story', 'just helped']
-    }
+    { topic: 'First-time buyers', keywords: ['first-time buyer', 'first time buyer', 'buying my first home', 'buy your first home', 'down payment', 'starter home', 'first home'] },
+    { topic: 'Interest rates', keywords: ['interest rate', 'interest rates', 'mortgage rate', 'mortgage rates', 'bank of canada', 'rate cut', 'rate hold', 'variable rate', 'fixed rate'] },
+    { topic: 'Market updates', keywords: ['market update', 'market crash', 'housing market', 'toronto market', 'gta market', 'inventory', 'benchmark price', 'average price', 'sales data'] },
+    { topic: 'Home staging', keywords: ['staging', 'home staging', 'declutter', 'prepare your home', 'staged to sell'] },
+    { topic: 'Seller tips', keywords: ['seller tip', 'selling your home', 'sell your home', 'listing prep', 'how to sell', 'seller mistakes'] },
+    { topic: 'Buyer mistakes', keywords: ['buyer mistakes', 'mistakes buyers make', 'what buyers get wrong', 'buyers forget', 'buying mistake'] },
+    { topic: 'Open house tips', keywords: ['open house', 'open houses', 'hosting an open house'] },
+    { topic: 'Area guides', keywords: ['neighbourhood', 'neighborhood', 'living in', 'moving to', 'best area', 'best neighbourhood', 'area guide'] },
+    { topic: 'Luxury listings', keywords: ['luxury listing', 'luxury real estate', 'luxury home', 'million dollar listing', 'waterfront estate'] },
+    { topic: 'Condos vs houses', keywords: ['condo vs house', 'condo or house', 'condo vs freehold', 'freehold vs condo'] },
+    { topic: 'Investing / rentals', keywords: ['investment property', 'rental property', 'cash flow', 'investor', 'real estate investing', 'landlord'] },
+    { topic: 'Closing costs', keywords: ['closing costs', 'hidden costs', 'costs of buying', 'land transfer tax', 'legal fees', 'closing expenses'] },
+    { topic: 'Mortgage tips', keywords: ['mortgage tip', 'mortgage approval', 'pre-approval', 'pre approval', 'amortization', 'stress test'] },
+    { topic: 'Renovation / value add', keywords: ['renovation', 'before and after', 'value add', 'increase value', 'upgrade your home'] },
+    { topic: 'Realtor behind-the-scenes', keywords: ['behind the scenes', 'day in the life', 'realtor life', 'showing day', 'listing day'] },
+    { topic: 'Client testimonials', keywords: ['testimonial', 'happy client', 'client story', 'success story', 'just helped'] }
   ];
 
   for (const rule of topicRules) {
@@ -223,12 +175,10 @@ async function getAllClients() {
 }
 
 async function getClientByEmail(email) {
-  const normalizedEmail = normalizeText(email);
-
   const { data, error } = await supabase
     .from('clients')
     .select('*')
-    .eq('email', normalizedEmail)
+    .eq('email', normalizeText(email))
     .maybeSingle();
 
   if (error) throw error;
@@ -310,24 +260,18 @@ async function sendMonthlyInactiveReminder() {
   const today = getTorontoDateParts();
   const target = getFridayBeforeLastWeek(today.year, today.month);
 
-  if (!sameDateParts(today, target)) {
-    return false;
-  }
+  if (!sameDateParts(today, target)) return false;
 
   const monthKey = `${today.year}-${String(today.month).padStart(2, '0')}`;
   const alreadySent = await getBotMeta('monthly_inactive_reminder_last_sent');
 
-  if (alreadySent?.meta_value === monthKey) {
-    return false;
-  }
+  if (alreadySent?.meta_value === monthKey) return false;
 
   const clients = await getAllClients();
   const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
 
   const channel = await client.channels.fetch(MONTHLY_REMINDERS_CHANNEL_ID).catch(() => null);
-  if (!channel || !channel.isTextBased()) {
-    return false;
-  }
+  if (!channel || !channel.isTextBased()) return false;
 
   const preview = inactive.slice(0, 15).map(c => {
     const remaining = c.sessions_total - c.sessions_used;
@@ -360,9 +304,7 @@ async function forceSendMonthlyInactiveReminder() {
   const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
 
   const channel = await client.channels.fetch(MONTHLY_REMINDERS_CHANNEL_ID).catch(() => null);
-  if (!channel || !channel.isTextBased()) {
-    return false;
-  }
+  if (!channel || !channel.isTextBased()) return false;
 
   const preview = inactive.slice(0, 15).map(c => {
     const remaining = c.sessions_total - c.sessions_used;
@@ -388,9 +330,7 @@ async function sendBookingTrackerMessage(content) {
   if (!BOOKINGS_TRACKER_CHANNEL_ID) return false;
 
   const channel = await client.channels.fetch(BOOKINGS_TRACKER_CHANNEL_ID).catch(() => null);
-  if (!channel || !channel.isTextBased()) {
-    return false;
-  }
+  if (!channel || !channel.isTextBased()) return false;
 
   await channel.send({ content });
   return true;
@@ -400,9 +340,7 @@ async function sendTrendingAccountWatchMessage(content) {
   if (!TRENDING_ACCOUNT_WATCH_CHANNEL_ID) return false;
 
   const channel = await client.channels.fetch(TRENDING_ACCOUNT_WATCH_CHANNEL_ID).catch(() => null);
-  if (!channel || !channel.isTextBased()) {
-    return false;
-  }
+  if (!channel || !channel.isTextBased()) return false;
 
   await channel.send({ content });
   return true;
@@ -572,9 +510,7 @@ function buildCsv(clients) {
 }
 
 async function replyText(target, content) {
-  if ('author' in target) {
-    return target.reply(content);
-  }
+  if ('author' in target) return target.reply(content);
 
   if (target.replied || target.deferred) {
     return target.followUp({ content });
@@ -588,16 +524,12 @@ async function handleListClients(target, limit = 20, page = 1) {
   const safePage = Math.max(Number(page) || 1, 1);
   const clients = await getAllClients();
 
-  if (clients.length === 0) {
-    return replyText(target, 'No clients yet.');
-  }
+  if (clients.length === 0) return replyText(target, 'No clients yet.');
 
   const start = (safePage - 1) * safeLimit;
   const pageClients = clients.slice(start, start + safeLimit);
 
-  if (pageClients.length === 0) {
-    return replyText(target, 'No clients on that page.');
-  }
+  if (pageClients.length === 0) return replyText(target, 'No clients on that page.');
 
   return replyText(
     target,
@@ -607,10 +539,7 @@ async function handleListClients(target, limit = 20, page = 1) {
 
 async function handleSearchClient(target, query) {
   const normalized = normalizeText(query);
-
-  if (!normalized) {
-    return replyText(target, 'Usage: !searchclient name or email');
-  }
+  if (!normalized) return replyText(target, 'Usage: !searchclient name or email');
 
   const clients = await getAllClients();
   const matches = clients.filter(c =>
@@ -619,9 +548,7 @@ async function handleSearchClient(target, query) {
     (c.phone && c.phone.toLowerCase().includes(normalized))
   );
 
-  if (matches.length === 0) {
-    return replyText(target, 'No matching clients found.');
-  }
+  if (matches.length === 0) return replyText(target, 'No matching clients found.');
 
   const limited = matches.slice(0, 20);
   return replyText(
@@ -632,15 +559,10 @@ async function handleSearchClient(target, query) {
 
 async function handleClient(target, query) {
   const normalized = normalizeText(query);
-
-  if (!normalized) {
-    return replyText(target, 'Usage: !client email@example.com or !client partial name');
-  }
+  if (!normalized) return replyText(target, 'Usage: !client email@example.com or !client partial name');
 
   const exact = await getClientByEmail(normalized);
-  if (exact) {
-    return replyText(target, formatClientDetails(exact));
-  }
+  if (exact) return replyText(target, formatClientDetails(exact));
 
   const clients = await getAllClients();
   const matches = clients.filter(c =>
@@ -649,13 +571,8 @@ async function handleClient(target, query) {
     (c.phone && c.phone.toLowerCase().includes(normalized))
   );
 
-  if (matches.length === 0) {
-    return replyText(target, 'Client not found.');
-  }
-
-  if (matches.length === 1) {
-    return replyText(target, formatClientDetails(matches[0]));
-  }
+  if (matches.length === 0) return replyText(target, 'Client not found.');
+  if (matches.length === 1) return replyText(target, formatClientDetails(matches[0]));
 
   const limited = matches.slice(0, 10);
   return replyText(
@@ -671,16 +588,12 @@ async function handleInactiveClients(target, limit = 20, page = 1) {
   const clients = await getAllClients();
   const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
 
-  if (inactive.length === 0) {
-    return replyText(target, 'Everyone has booked this month.');
-  }
+  if (inactive.length === 0) return replyText(target, 'Everyone has booked this month.');
 
   const start = (safePage - 1) * safeLimit;
   const pageClients = inactive.slice(start, start + safeLimit);
 
-  if (pageClients.length === 0) {
-    return replyText(target, 'No inactive clients on that page.');
-  }
+  if (pageClients.length === 0) return replyText(target, 'No inactive clients on that page.');
 
   const text = pageClients.map(c => {
     const remaining = c.sessions_total - c.sessions_used;
@@ -698,9 +611,7 @@ async function handleRenewals(target, limit = 20) {
   const clients = await getAllClients();
   const renewalClients = clients.filter(c => c.sessions_used >= c.sessions_total - 1);
 
-  if (renewalClients.length === 0) {
-    return replyText(target, 'No clients currently need renewal attention.');
-  }
+  if (renewalClients.length === 0) return replyText(target, 'No clients currently need renewal attention.');
 
   const limited = renewalClients.slice(0, safeLimit);
   return replyText(
@@ -718,9 +629,7 @@ async function handleAddClient(target, name, phone, email, totalSessions = 6, no
   }
 
   const existing = await getClientByEmail(normalizedEmail);
-  if (existing) {
-    return replyText(target, 'Client already exists.');
-  }
+  if (existing) return replyText(target, 'Client already exists.');
 
   const added = await addClient({
     name,
@@ -735,15 +644,12 @@ async function handleAddClient(target, name, phone, email, totalSessions = 6, no
 
 async function handleBook(target, email, bookingDate, bookingTime) {
   const normalizedEmail = normalizeText(email);
-
   if (!normalizedEmail || !bookingDate || !bookingTime) {
     return replyText(target, 'Usage: !book email@example.com April-18-2026 1:00PM');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   if (c.sessions_used >= c.sessions_total) {
     return replyText(
@@ -785,9 +691,7 @@ async function handleCancelBooking(target, email, bookingDate, bookingTime, reas
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const noteLine = cleanReason
     ? `Cancelled: ${bookingDate} ${bookingTime} | Reason: ${cleanReason}`
@@ -815,15 +719,12 @@ Booked this month: ${updated.booked_this_month}`
 
 async function handleRescheduleBooking(target, email, oldDate, oldTime, newDate, newTime) {
   const normalizedEmail = normalizeText(email);
-
   if (!normalizedEmail || !oldDate || !oldTime || !newDate || !newTime) {
     return replyText(target, 'Usage: !reschedulebooking email@example.com oldDate oldTime newDate newTime');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const updated = await updateClientByEmail(normalizedEmail, {
     notes: appendNote(c.notes, `Rescheduled: ${oldDate} ${oldTime} -> ${newDate} ${newTime}`)
@@ -841,15 +742,10 @@ async function handleRescheduleBooking(target, email, oldDate, oldTime, newDate,
 
 async function handleUndoSession(target, email) {
   const normalizedEmail = normalizeText(email);
-
-  if (!normalizedEmail) {
-    return replyText(target, 'Usage: !undosession email@example.com');
-  }
+  if (!normalizedEmail) return replyText(target, 'Usage: !undosession email@example.com');
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const updated = await updateClientByEmail(normalizedEmail, {
     sessions_used: Math.max(0, c.sessions_used - 1),
@@ -861,15 +757,12 @@ async function handleUndoSession(target, email) {
 
 async function handleSetPhone(target, email, phone) {
   const normalizedEmail = normalizeText(email);
-
   if (!normalizedEmail || !phone) {
     return replyText(target, 'Usage: !setphone email@example.com 416-555-1234');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   await updateClientByEmail(normalizedEmail, { phone });
   return replyText(target, `Updated phone for ${c.name}`);
@@ -884,9 +777,7 @@ async function handleSetUsed(target, email, used) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const updated = await updateClientByEmail(normalizedEmail, {
     sessions_used: Math.max(0, numericUsed)
@@ -904,9 +795,7 @@ async function handleSetBookedMonth(target, email, booked) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const updated = await updateClientByEmail(normalizedEmail, {
     booked_this_month: Math.max(0, numericBooked)
@@ -924,9 +813,7 @@ async function handleSetTotal(target, email, total) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const updated = await updateClientByEmail(normalizedEmail, {
     sessions_total: numericTotal
@@ -944,9 +831,7 @@ async function handleRenewClient(target, email, total = 6) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const updated = await updateClientByEmail(normalizedEmail, {
     sessions_used: 0,
@@ -967,9 +852,7 @@ async function handleSetNote(target, email, note) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const updated = await updateClientByEmail(normalizedEmail, {
     notes: noteText
@@ -980,25 +863,17 @@ async function handleSetNote(target, email, note) {
 
 async function handleNote(target, email) {
   const normalizedEmail = normalizeText(email);
-
-  if (!normalizedEmail) {
-    return replyText(target, 'Usage: !note email@example.com');
-  }
+  if (!normalizedEmail) return replyText(target, 'Usage: !note email@example.com');
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   return replyText(target, `${c.name}\nNotes: ${c.notes || 'None'}`);
 }
 
 async function handleExportCsv(target) {
   const clients = await getAllClients();
-
-  if (clients.length === 0) {
-    return replyText(target, 'No clients to export.');
-  }
+  if (clients.length === 0) return replyText(target, 'No clients to export.');
 
   const csv = buildCsv(clients);
   const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'clients.csv' });
@@ -1022,9 +897,7 @@ async function handleRemoveClient(target, email, confirmWord) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-  if (!c) {
-    return replyText(target, 'Client not found.');
-  }
+  if (!c) return replyText(target, 'Client not found.');
 
   const { error } = await supabase
     .from('clients')
@@ -1032,7 +905,6 @@ async function handleRemoveClient(target, email, confirmWord) {
     .eq('email', normalizedEmail);
 
   if (error) throw error;
-
   return replyText(target, `Removed ${normalizedEmail}`);
 }
 
@@ -1056,9 +928,7 @@ async function handleResetMonth(target, confirmWord) {
 
 async function handleTrackedAccounts(target, tier = '') {
   const requestedTier = String(tier || '').trim();
-  const normalizedTier = requestedTier
-    ? requestedTier.replace(/^tier\s*/i, '').toUpperCase()
-    : '';
+  const normalizedTier = requestedTier ? requestedTier.replace(/^tier\s*/i, '').toUpperCase() : '';
   const tierValue = normalizedTier ? `Tier ${normalizedTier}` : null;
 
   const accounts = await getTrackedAccounts(tierValue);
@@ -1087,10 +957,7 @@ async function handleTrackedAccounts(target, tier = '') {
 
 async function handleClassifyTopic(target, text) {
   const input = String(text || '').trim();
-
-  if (!input) {
-    return replyText(target, 'Usage: !classifytopic your caption text here');
-  }
+  if (!input) return replyText(target, 'Usage: !classifytopic your caption text here');
 
   return replyText(target, `Detected topic: ${classifyTopic(input)}`);
 }
@@ -1107,9 +974,7 @@ async function handleAddTrendPost(target, username, postDate, likes, comments, v
   }
 
   const account = await getTrackedAccountByUsername(cleanUsername);
-  if (!account) {
-    return replyText(target, `Tracked account not found for @${cleanUsername}`);
-  }
+  if (!account) return replyText(target, `Tracked account not found for @${cleanUsername}`);
 
   const numericLikes = Number(likes || 0);
   const numericComments = Number(comments || 0);
@@ -1163,10 +1028,7 @@ async function handleTrendTopics(target, limit = 10) {
   nextWeek.setDate(nextWeek.getDate() + 7);
 
   const posts = await getContentPostsBetween(weekStart, nextWeek);
-
-  if (posts.length === 0) {
-    return replyText(target, 'No trend posts found for this week yet.');
-  }
+  if (posts.length === 0) return replyText(target, 'No trend posts found for this week yet.');
 
   const stats = summarizeTopicStats(posts)
     .sort((a, b) => b.count - a.count)
@@ -1190,9 +1052,7 @@ async function handleTrendsWeekly(target) {
   const currentPosts = await getContentPostsBetween(weekStart, nextWeek);
   const previousPosts = await getContentPostsBetween(prevWeekStart, weekStart);
 
-  if (currentPosts.length === 0) {
-    return replyText(target, 'No trend posts found for this week yet.');
-  }
+  if (currentPosts.length === 0) return replyText(target, 'No trend posts found for this week yet.');
 
   const currentStats = summarizeTopicStats(currentPosts);
   const previousStats = summarizeTopicStats(previousPosts);
@@ -1231,9 +1091,7 @@ async function handleTrendIdeas(target) {
   nextWeek.setDate(nextWeek.getDate() + 7);
 
   const posts = await getContentPostsBetween(weekStart, nextWeek);
-  if (posts.length === 0) {
-    return replyText(target, 'No trend posts found for this week yet.');
-  }
+  if (posts.length === 0) return replyText(target, 'No trend posts found for this week yet.');
 
   const topTopics = summarizeTopicStats(posts)
     .sort((a, b) => b.count - a.count)
@@ -1432,7 +1290,7 @@ client.on('messageCreate', async (message) => {
 !removeclient email@example.com confirm
 !resetmonth confirm
 
-Trend tracker commands:
+Trend commands:
 !trackedaccounts
 !trackedaccounts B
 !classifytopic caption text here
