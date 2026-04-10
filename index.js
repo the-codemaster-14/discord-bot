@@ -16,6 +16,7 @@ const client = new Client({
 
 const MONTHLY_REMINDERS_CHANNEL_ID = process.env.MONTHLY_REMINDERS_CHANNEL_ID || '';
 const BOOKINGS_TRACKER_CHANNEL_ID = process.env.BOOKINGS_TRACKER_CHANNEL_ID || '';
+const TRENDING_ACCOUNT_WATCH_CHANNEL_ID = process.env.TRENDING_ACCOUNT_WATCH_CHANNEL_ID || '';
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
 const supabase = createClient(
@@ -30,6 +31,10 @@ function currentMonthKey() {
   return `${year}-${month}`;
 }
 
+function normalizeText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function appendNote(existingNotes, newLine) {
   const existing = String(existingNotes || '').trim();
   const line = String(newLine || '').trim();
@@ -37,6 +42,174 @@ function appendNote(existingNotes, newLine) {
   if (!line) return existing;
   if (!existing) return line;
   return `${existing}\n${line}`;
+}
+
+function getTorontoDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Toronto',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+
+  const year = Number(parts.find(p => p.type === 'year')?.value);
+  const month = Number(parts.find(p => p.type === 'month')?.value);
+  const day = Number(parts.find(p => p.type === 'day')?.value);
+
+  return { year, month, day };
+}
+
+function getFridayBeforeLastWeek(year, month) {
+  const lastDay = new Date(Date.UTC(year, month, 0));
+  const lastDayWeekday = lastDay.getUTCDay();
+  const mondayOffset = (lastDayWeekday + 6) % 7;
+  const mondayOfLastWeek = lastDay.getUTCDate() - mondayOffset;
+  const target = new Date(Date.UTC(year, month - 1, mondayOfLastWeek - 3, 12));
+
+  return {
+    year: target.getUTCFullYear(),
+    month: target.getUTCMonth() + 1,
+    day: target.getUTCDate()
+  };
+}
+
+function sameDateParts(a, b) {
+  return a.year === b.year && a.month === b.month && a.day === b.day;
+}
+
+function getWeekStart(date = new Date()) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function getPreviousWeekStart(date = new Date()) {
+  const d = getWeekStart(date);
+  d.setDate(d.getDate() - 7);
+  return d;
+}
+
+function toIsoDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function formatPercent(value) {
+  return `${Number(value || 0).toFixed(2)}%`;
+}
+
+function safeEngagementRate(likes, comments, views) {
+  const l = Number(likes || 0);
+  const c = Number(comments || 0);
+  const v = Number(views || 0);
+
+  if (v <= 0) return 0;
+  return Number((((l + c) / v) * 100).toFixed(4));
+}
+
+function classifyTopic(text) {
+  const normalized = normalizeText(text);
+
+  const topicRules = [
+    {
+      topic: 'First-time buyers',
+      keywords: ['first-time buyer', 'first time buyer', 'buying my first home', 'buy your first home', 'down payment', 'starter home', 'first home']
+    },
+    {
+      topic: 'Interest rates',
+      keywords: ['interest rate', 'interest rates', 'mortgage rate', 'mortgage rates', 'bank of canada', 'rate cut', 'rate hold', 'variable rate', 'fixed rate']
+    },
+    {
+      topic: 'Market updates',
+      keywords: ['market update', 'market crash', 'housing market', 'toronto market', 'gta market', 'inventory', 'benchmark price', 'average price', 'sales data']
+    },
+    {
+      topic: 'Home staging',
+      keywords: ['staging', 'home staging', 'declutter', 'prepare your home', 'staged to sell']
+    },
+    {
+      topic: 'Seller tips',
+      keywords: ['seller tip', 'selling your home', 'sell your home', 'listing prep', 'how to sell', 'seller mistakes']
+    },
+    {
+      topic: 'Buyer mistakes',
+      keywords: ['buyer mistakes', 'mistakes buyers make', 'what buyers get wrong', 'buyers forget', 'buying mistake']
+    },
+    {
+      topic: 'Open house tips',
+      keywords: ['open house', 'open houses', 'hosting an open house']
+    },
+    {
+      topic: 'Area guides',
+      keywords: ['neighbourhood', 'neighborhood', 'living in', 'moving to', 'best area', 'best neighbourhood', 'area guide']
+    },
+    {
+      topic: 'Luxury listings',
+      keywords: ['luxury listing', 'luxury real estate', 'luxury home', 'million dollar listing', 'waterfront estate']
+    },
+    {
+      topic: 'Condos vs houses',
+      keywords: ['condo vs house', 'condo or house', 'condo vs freehold', 'freehold vs condo']
+    },
+    {
+      topic: 'Investing / rentals',
+      keywords: ['investment property', 'rental property', 'cash flow', 'investor', 'real estate investing', 'landlord']
+    },
+    {
+      topic: 'Closing costs',
+      keywords: ['closing costs', 'hidden costs', 'costs of buying', 'land transfer tax', 'legal fees', 'closing expenses']
+    },
+    {
+      topic: 'Mortgage tips',
+      keywords: ['mortgage tip', 'mortgage approval', 'pre-approval', 'pre approval', 'amortization', 'stress test']
+    },
+    {
+      topic: 'Renovation / value add',
+      keywords: ['renovation', 'before and after', 'value add', 'increase value', 'upgrade your home']
+    },
+    {
+      topic: 'Realtor behind-the-scenes',
+      keywords: ['behind the scenes', 'day in the life', 'realtor life', 'showing day', 'listing day']
+    },
+    {
+      topic: 'Client testimonials',
+      keywords: ['testimonial', 'happy client', 'client story', 'success story', 'just helped']
+    }
+  ];
+
+  for (const rule of topicRules) {
+    if (rule.keywords.some(keyword => normalized.includes(keyword))) {
+      return rule.topic;
+    }
+  }
+
+  return 'Other';
+}
+
+function buildSuggestedIdeas(topics) {
+  const topicToIdeas = {
+    'First-time buyers': '3 first-time buyer mistakes people make in Toronto',
+    'Interest rates': 'How interest rates actually change your monthly payment',
+    'Market updates': 'Toronto market update: what changed this week',
+    'Home staging': '3 staging fixes that make a home feel more expensive',
+    'Seller tips': 'What sellers should do before listing this month',
+    'Buyer mistakes': '5 mistakes buyers make before they even book a showing',
+    'Open house tips': 'Nobody talks about this before hosting an open house',
+    'Area guides': 'What it is really like living in this Toronto neighbourhood',
+    'Luxury listings': 'What makes a luxury listing actually feel premium online',
+    'Condos vs houses': 'Condo vs freehold in 2026: what actually matters',
+    'Investing / rentals': 'What investors are missing in today’s rental market',
+    'Closing costs': '5 hidden costs buyers forget in Toronto',
+    'Mortgage tips': 'How to get mortgage-ready before you start house hunting',
+    'Renovation / value add': '3 renovations that add value without over-improving',
+    'Realtor behind-the-scenes': 'A real behind-the-scenes day of getting a listing live',
+    'Client testimonials': 'What this buyer learned after finally closing on their first home',
+    'Other': 'A fresh take on a topic competitors are starting to repeat'
+  };
+
+  return topics.slice(0, 3).map(topic => topicToIdeas[topic] || topicToIdeas.Other);
 }
 
 async function getAllClients() {
@@ -50,7 +223,7 @@ async function getAllClients() {
 }
 
 async function getClientByEmail(email) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
 
   const { data, error } = await supabase
     .from('clients')
@@ -68,7 +241,7 @@ async function addClient({ name, phone, email, sessions_total, notes = '' }) {
     .insert([{
       name,
       phone,
-      email: email.toLowerCase(),
+      email: normalizeText(email),
       sessions_used: 0,
       sessions_total,
       booked_this_month: 0,
@@ -86,7 +259,7 @@ async function updateClientByEmail(email, updates) {
   const { data, error } = await supabase
     .from('clients')
     .update(updates)
-    .eq('email', email.toLowerCase())
+    .eq('email', normalizeText(email))
     .select()
     .single();
 
@@ -131,43 +304,8 @@ async function setBotMeta(key, value) {
   if (error) throw error;
 }
 
-function getTorontoDateParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Toronto',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date);
-
-  const year = Number(parts.find(p => p.type === 'year')?.value);
-  const month = Number(parts.find(p => p.type === 'month')?.value);
-  const day = Number(parts.find(p => p.type === 'day')?.value);
-
-  return { year, month, day };
-}
-
-function getFridayBeforeLastWeek(year, month) {
-  const lastDay = new Date(Date.UTC(year, month, 0));
-  const lastDayWeekday = lastDay.getUTCDay();
-  const mondayOffset = (lastDayWeekday + 6) % 7;
-  const mondayOfLastWeek = lastDay.getUTCDate() - mondayOffset;
-  const target = new Date(Date.UTC(year, month - 1, mondayOfLastWeek - 3, 12));
-
-  return {
-    year: target.getUTCFullYear(),
-    month: target.getUTCMonth() + 1,
-    day: target.getUTCDate()
-  };
-}
-
-function sameDateParts(a, b) {
-  return a.year === b.year && a.month === b.month && a.day === b.day;
-}
-
 async function sendMonthlyInactiveReminder() {
-  if (!MONTHLY_REMINDERS_CHANNEL_ID) {
-    return false;
-  }
+  if (!MONTHLY_REMINDERS_CHANNEL_ID) return false;
 
   const today = getTorontoDateParts();
   const target = getFridayBeforeLastWeek(today.year, today.month);
@@ -187,7 +325,6 @@ async function sendMonthlyInactiveReminder() {
   const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
 
   const channel = await client.channels.fetch(MONTHLY_REMINDERS_CHANNEL_ID).catch(() => null);
-
   if (!channel || !channel.isTextBased()) {
     return false;
   }
@@ -198,8 +335,7 @@ async function sendMonthlyInactiveReminder() {
   }).join('\n');
 
   const csv = buildCsv(inactive);
-  const buffer = Buffer.from(csv, 'utf-8');
-  const attachment = new AttachmentBuilder(buffer, {
+  const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), {
     name: `inactive-clients-${monthKey}.csv`
   });
 
@@ -215,9 +351,7 @@ async function sendMonthlyInactiveReminder() {
 }
 
 async function forceSendMonthlyInactiveReminder() {
-  if (!MONTHLY_REMINDERS_CHANNEL_ID) {
-    return false;
-  }
+  if (!MONTHLY_REMINDERS_CHANNEL_ID) return false;
 
   const today = getTorontoDateParts();
   const monthKey = `${today.year}-${String(today.month).padStart(2, '0')}`;
@@ -226,7 +360,6 @@ async function forceSendMonthlyInactiveReminder() {
   const inactive = clients.filter(c => Number(c.booked_this_month) === 0);
 
   const channel = await client.channels.fetch(MONTHLY_REMINDERS_CHANNEL_ID).catch(() => null);
-
   if (!channel || !channel.isTextBased()) {
     return false;
   }
@@ -237,8 +370,7 @@ async function forceSendMonthlyInactiveReminder() {
   }).join('\n');
 
   const csv = buildCsv(inactive);
-  const buffer = Buffer.from(csv, 'utf-8');
-  const attachment = new AttachmentBuilder(buffer, {
+  const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), {
     name: `inactive-clients-${monthKey}.csv`
   });
 
@@ -253,18 +385,137 @@ async function forceSendMonthlyInactiveReminder() {
 }
 
 async function sendBookingTrackerMessage(content) {
-  if (!BOOKINGS_TRACKER_CHANNEL_ID) {
-    return false;
-  }
+  if (!BOOKINGS_TRACKER_CHANNEL_ID) return false;
 
   const channel = await client.channels.fetch(BOOKINGS_TRACKER_CHANNEL_ID).catch(() => null);
-
   if (!channel || !channel.isTextBased()) {
     return false;
   }
 
   await channel.send({ content });
   return true;
+}
+
+async function sendTrendingAccountWatchMessage(content) {
+  if (!TRENDING_ACCOUNT_WATCH_CHANNEL_ID) return false;
+
+  const channel = await client.channels.fetch(TRENDING_ACCOUNT_WATCH_CHANNEL_ID).catch(() => null);
+  if (!channel || !channel.isTextBased()) {
+    return false;
+  }
+
+  await channel.send({ content });
+  return true;
+}
+
+async function getTrackedAccounts(tier = null) {
+  let query = supabase
+    .from('tracked_accounts')
+    .select('*')
+    .eq('is_active', true)
+    .order('tier', { ascending: true })
+    .order('name', { ascending: true });
+
+  if (tier) {
+    query = query.eq('tier', tier);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+async function getTrackedAccountByUsername(username) {
+  const { data, error } = await supabase
+    .from('tracked_accounts')
+    .select('*')
+    .eq('username', normalizeText(username).replace(/^@/, ''))
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function addContentPost({
+  account_id,
+  account_name,
+  platform = 'instagram',
+  post_date,
+  caption,
+  hook,
+  hashtags = [],
+  topic,
+  likes = 0,
+  comments = 0,
+  views = 0,
+  engagement_rate = 0,
+  url = ''
+}) {
+  const { data, error } = await supabase
+    .from('content_posts')
+    .insert([{
+      account_id,
+      account_name,
+      platform,
+      post_date,
+      caption,
+      hook,
+      hashtags,
+      topic,
+      likes,
+      comments,
+      views,
+      engagement_rate,
+      url
+    }])
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function getContentPostsBetween(startDate, endDate) {
+  const { data, error } = await supabase
+    .from('content_posts')
+    .select('*')
+    .gte('post_date', startDate.toISOString())
+    .lt('post_date', endDate.toISOString())
+    .order('post_date', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+}
+
+function summarizeTopicStats(posts) {
+  const stats = new Map();
+
+  for (const post of posts) {
+    const topic = post.topic || 'Other';
+    const current = stats.get(topic) || { topic, count: 0, totalEngagement: 0 };
+    current.count += 1;
+    current.totalEngagement += Number(post.engagement_rate || 0);
+    stats.set(topic, current);
+  }
+
+  return Array.from(stats.values()).map(item => ({
+    topic: item.topic,
+    count: item.count,
+    avgEngagement: item.count > 0 ? item.totalEngagement / item.count : 0
+  }));
+}
+
+function computeGrowingTopics(currentStats, previousStats) {
+  const prevMap = new Map(previousStats.map(item => [item.topic, item.count]));
+
+  return currentStats.map(item => {
+    const previousCount = prevMap.get(item.topic) || 0;
+    const changePercent = previousCount === 0
+      ? (item.count > 0 ? 100 : 0)
+      : ((item.count - previousCount) / previousCount) * 100;
+
+    return { ...item, changePercent };
+  });
 }
 
 function formatClientLine(c) {
@@ -335,7 +586,6 @@ async function replyText(target, content) {
 async function handleListClients(target, limit = 20, page = 1) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
-
   const clients = await getAllClients();
 
   if (clients.length === 0) {
@@ -343,30 +593,26 @@ async function handleListClients(target, limit = 20, page = 1) {
   }
 
   const start = (safePage - 1) * safeLimit;
-  const end = start + safeLimit;
-  const pageClients = clients.slice(start, end);
+  const pageClients = clients.slice(start, start + safeLimit);
 
   if (pageClients.length === 0) {
     return replyText(target, 'No clients on that page.');
   }
 
-  const text = pageClients.map(formatClientLine).join('\n');
-
   return replyText(
     target,
-    `Showing ${pageClients.length} of ${clients.length} clients (page ${safePage}):\n${text}`
+    `Showing ${pageClients.length} of ${clients.length} clients (page ${safePage}):\n${pageClients.map(formatClientLine).join('\n')}`
   );
 }
 
 async function handleSearchClient(target, query) {
-  const normalized = String(query || '').trim().toLowerCase();
+  const normalized = normalizeText(query);
 
   if (!normalized) {
     return replyText(target, 'Usage: !searchclient name or email');
   }
 
   const clients = await getAllClients();
-
   const matches = clients.filter(c =>
     (c.name && c.name.toLowerCase().includes(normalized)) ||
     (c.email && c.email.toLowerCase().includes(normalized)) ||
@@ -377,30 +623,26 @@ async function handleSearchClient(target, query) {
     return replyText(target, 'No matching clients found.');
   }
 
-  const limitedMatches = matches.slice(0, 20);
-  const text = limitedMatches.map(formatClientLine).join('\n');
-
+  const limited = matches.slice(0, 20);
   return replyText(
     target,
-    `Found ${matches.length} matching client(s). Showing ${limitedMatches.length}:\n${text}`
+    `Found ${matches.length} matching client(s). Showing ${limited.length}:\n${limited.map(formatClientLine).join('\n')}`
   );
 }
 
 async function handleClient(target, query) {
-  const normalized = String(query || '').trim().toLowerCase();
+  const normalized = normalizeText(query);
 
   if (!normalized) {
     return replyText(target, 'Usage: !client email@example.com or !client partial name');
   }
 
-  const exactEmailMatch = await getClientByEmail(normalized);
-
-  if (exactEmailMatch) {
-    return replyText(target, formatClientDetails(exactEmailMatch));
+  const exact = await getClientByEmail(normalized);
+  if (exact) {
+    return replyText(target, formatClientDetails(exact));
   }
 
   const clients = await getAllClients();
-
   const matches = clients.filter(c =>
     (c.name && c.name.toLowerCase().includes(normalized)) ||
     (c.email && c.email.toLowerCase().includes(normalized)) ||
@@ -415,12 +657,10 @@ async function handleClient(target, query) {
     return replyText(target, formatClientDetails(matches[0]));
   }
 
-  const limitedMatches = matches.slice(0, 10);
-  const text = limitedMatches.map(formatClientLine).join('\n');
-
+  const limited = matches.slice(0, 10);
   return replyText(
     target,
-    `Found ${matches.length} matching clients. Be more specific or use the exact email.\nShowing ${limitedMatches.length}:\n${text}`
+    `Found ${matches.length} matching clients. Be more specific or use the exact email.\nShowing ${limited.length}:\n${limited.map(formatClientLine).join('\n')}`
   );
 }
 
@@ -436,8 +676,7 @@ async function handleInactiveClients(target, limit = 20, page = 1) {
   }
 
   const start = (safePage - 1) * safeLimit;
-  const end = start + safeLimit;
-  const pageClients = inactive.slice(start, end);
+  const pageClients = inactive.slice(start, start + safeLimit);
 
   if (pageClients.length === 0) {
     return replyText(target, 'No inactive clients on that page.');
@@ -456,7 +695,6 @@ async function handleInactiveClients(target, limit = 20, page = 1) {
 
 async function handleRenewals(target, limit = 20) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
-
   const clients = await getAllClients();
   const renewalClients = clients.filter(c => c.sessions_used >= c.sessions_total - 1);
 
@@ -465,16 +703,14 @@ async function handleRenewals(target, limit = 20) {
   }
 
   const limited = renewalClients.slice(0, safeLimit);
-  const text = limited.map(formatClientLine).join('\n');
-
   return replyText(
     target,
-    `Showing ${limited.length} of ${renewalClients.length} clients needing renewal attention:\n${text}`
+    `Showing ${limited.length} of ${renewalClients.length} clients needing renewal attention:\n${limited.map(formatClientLine).join('\n')}`
   );
 }
 
 async function handleAddClient(target, name, phone, email, totalSessions = 6, notes = '') {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
   const total = Number(totalSessions || 6);
 
   if (!name || !phone || !normalizedEmail || Number.isNaN(total)) {
@@ -498,14 +734,13 @@ async function handleAddClient(target, name, phone, email, totalSessions = 6, no
 }
 
 async function handleBook(target, email, bookingDate, bookingTime) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
 
   if (!normalizedEmail || !bookingDate || !bookingTime) {
     return replyText(target, 'Usage: !book email@example.com April-18-2026 1:00PM');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -517,11 +752,10 @@ async function handleBook(target, email, bookingDate, bookingTime) {
     );
   }
 
-  const noteLine = `Booked: ${bookingDate} ${bookingTime}`;
   const updated = await updateClientByEmail(normalizedEmail, {
     sessions_used: c.sessions_used + 1,
     booked_this_month: c.booked_this_month + 1,
-    notes: appendNote(c.notes, noteLine)
+    notes: appendNote(c.notes, `Booked: ${bookingDate} ${bookingTime}`)
   });
 
   await sendBookingTrackerMessage(
@@ -543,7 +777,7 @@ Notes: ${updated.notes || 'None'}`
 }
 
 async function handleCancelBooking(target, email, bookingDate, bookingTime, reason = '') {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
   const cleanReason = String(reason || '').trim();
 
   if (!normalizedEmail || !bookingDate || !bookingTime) {
@@ -551,7 +785,6 @@ async function handleCancelBooking(target, email, bookingDate, bookingTime, reas
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -581,21 +814,19 @@ Booked this month: ${updated.booked_this_month}`
 }
 
 async function handleRescheduleBooking(target, email, oldDate, oldTime, newDate, newTime) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
 
   if (!normalizedEmail || !oldDate || !oldTime || !newDate || !newTime) {
     return replyText(target, 'Usage: !reschedulebooking email@example.com oldDate oldTime newDate newTime');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
 
-  const noteLine = `Rescheduled: ${oldDate} ${oldTime} -> ${newDate} ${newTime}`;
   const updated = await updateClientByEmail(normalizedEmail, {
-    notes: appendNote(c.notes, noteLine)
+    notes: appendNote(c.notes, `Rescheduled: ${oldDate} ${oldTime} -> ${newDate} ${newTime}`)
   });
 
   await sendBookingTrackerMessage(
@@ -609,14 +840,13 @@ async function handleRescheduleBooking(target, email, oldDate, oldTime, newDate,
 }
 
 async function handleUndoSession(target, email) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
 
   if (!normalizedEmail) {
     return replyText(target, 'Usage: !undosession email@example.com');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -630,14 +860,13 @@ async function handleUndoSession(target, email) {
 }
 
 async function handleSetPhone(target, email, phone) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
 
   if (!normalizedEmail || !phone) {
     return replyText(target, 'Usage: !setphone email@example.com 416-555-1234');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -647,7 +876,7 @@ async function handleSetPhone(target, email, phone) {
 }
 
 async function handleSetUsed(target, email, used) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
   const numericUsed = Number(used);
 
   if (!normalizedEmail || Number.isNaN(numericUsed)) {
@@ -655,7 +884,6 @@ async function handleSetUsed(target, email, used) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -668,7 +896,7 @@ async function handleSetUsed(target, email, used) {
 }
 
 async function handleSetBookedMonth(target, email, booked) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
   const numericBooked = Number(booked);
 
   if (!normalizedEmail || Number.isNaN(numericBooked)) {
@@ -676,7 +904,6 @@ async function handleSetBookedMonth(target, email, booked) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -689,7 +916,7 @@ async function handleSetBookedMonth(target, email, booked) {
 }
 
 async function handleSetTotal(target, email, total) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
   const numericTotal = Number(total);
 
   if (!normalizedEmail || Number.isNaN(numericTotal)) {
@@ -697,7 +924,6 @@ async function handleSetTotal(target, email, total) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -710,7 +936,7 @@ async function handleSetTotal(target, email, total) {
 }
 
 async function handleRenewClient(target, email, total = 6) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
   const numericTotal = Number(total || 6);
 
   if (!normalizedEmail || Number.isNaN(numericTotal)) {
@@ -718,7 +944,6 @@ async function handleRenewClient(target, email, total = 6) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -734,7 +959,7 @@ async function handleRenewClient(target, email, total = 6) {
 }
 
 async function handleSetNote(target, email, note) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
   const noteText = String(note || '').trim();
 
   if (!normalizedEmail || !noteText) {
@@ -742,7 +967,6 @@ async function handleSetNote(target, email, note) {
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -755,14 +979,13 @@ async function handleSetNote(target, email, note) {
 }
 
 async function handleNote(target, email) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
 
   if (!normalizedEmail) {
     return replyText(target, 'Usage: !note email@example.com');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -778,38 +1001,27 @@ async function handleExportCsv(target) {
   }
 
   const csv = buildCsv(clients);
-  const buffer = Buffer.from(csv, 'utf-8');
-  const attachment = new AttachmentBuilder(buffer, { name: 'clients.csv' });
+  const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'clients.csv' });
 
   if ('author' in target) {
-    return target.reply({
-      content: 'Client export:',
-      files: [attachment]
-    });
+    return target.reply({ content: 'Client export:', files: [attachment] });
   }
 
   if (target.replied || target.deferred) {
-    return target.followUp({
-      content: 'Client export:',
-      files: [attachment]
-    });
+    return target.followUp({ content: 'Client export:', files: [attachment] });
   }
 
-  return target.reply({
-    content: 'Client export:',
-    files: [attachment]
-  });
+  return target.reply({ content: 'Client export:', files: [attachment] });
 }
 
 async function handleRemoveClient(target, email, confirmWord) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeText(email);
 
   if (!normalizedEmail || String(confirmWord || '').toLowerCase() !== 'confirm') {
     return replyText(target, 'Usage: !removeclient email@example.com confirm');
   }
 
   const c = await getClientByEmail(normalizedEmail);
-
   if (!c) {
     return replyText(target, 'Client not found.');
   }
@@ -840,6 +1052,185 @@ async function handleResetMonth(target, confirmWord) {
   }
 
   return replyText(target, 'Monthly booking counts reset.');
+}
+
+async function handleTrackedAccounts(target, tier = '') {
+  const requestedTier = String(tier || '').trim();
+  const normalizedTier = requestedTier
+    ? requestedTier.replace(/^tier\s*/i, '').toUpperCase()
+    : '';
+  const tierValue = normalizedTier ? `Tier ${normalizedTier}` : null;
+
+  const accounts = await getTrackedAccounts(tierValue);
+
+  if (accounts.length === 0) {
+    return replyText(target, 'No tracked accounts found for that tier.');
+  }
+
+  const lines = accounts.map(a => {
+    const handle = a.username ? `@${a.username}` : '(no username)';
+    return `${a.tier} | ${a.name} | ${handle} | Tags: ${(a.tags || []).join(', ')}`;
+  });
+
+  return replyText(target, lines.join('\n'));
+}
+
+async function handleClassifyTopic(target, text) {
+  const input = String(text || '').trim();
+
+  if (!input) {
+    return replyText(target, 'Usage: !classifytopic your caption text here');
+  }
+
+  return replyText(target, `Detected topic: ${classifyTopic(input)}`);
+}
+
+async function handleAddTrendPost(target, username, postDate, likes, comments, views, url, caption) {
+  const cleanUsername = normalizeText(username).replace(/^@/, '');
+  const cleanCaption = String(caption || '').trim();
+
+  if (!cleanUsername || !postDate || !url || !cleanCaption) {
+    return replyText(
+      target,
+      'Usage: !addtrendpost username YYYY-MM-DD likes comments views https://post-url caption text here'
+    );
+  }
+
+  const account = await getTrackedAccountByUsername(cleanUsername);
+  if (!account) {
+    return replyText(target, `Tracked account not found for @${cleanUsername}`);
+  }
+
+  const numericLikes = Number(likes || 0);
+  const numericComments = Number(comments || 0);
+  const numericViews = Number(views || 0);
+
+  if ([numericLikes, numericComments, numericViews].some(Number.isNaN)) {
+    return replyText(target, 'Likes, comments, and views must be numbers.');
+  }
+
+  const topic = classifyTopic(cleanCaption);
+  const hashtags = (cleanCaption.match(/#[a-zA-Z0-9_]+/g) || []).map(tag => tag.toLowerCase());
+  const hook = cleanCaption.split('\n')[0].trim().slice(0, 200);
+  const engagementRate = safeEngagementRate(numericLikes, numericComments, numericViews);
+  const isoPostDate = new Date(`${postDate}T12:00:00.000Z`);
+
+  if (Number.isNaN(isoPostDate.getTime())) {
+    return replyText(target, 'Post date must be in YYYY-MM-DD format.');
+  }
+
+  const created = await addContentPost({
+    account_id: account.id,
+    account_name: account.name,
+    platform: account.platform || 'instagram',
+    post_date: isoPostDate.toISOString(),
+    caption: cleanCaption,
+    hook,
+    hashtags,
+    topic,
+    likes: numericLikes,
+    comments: numericComments,
+    views: numericViews,
+    engagement_rate: engagementRate,
+    url
+  });
+
+  const summary = `Trend post saved for ${created.account_name}.\nTopic: ${created.topic}\nEngagement: ${formatPercent(created.engagement_rate)}`;
+  await sendTrendingAccountWatchMessage(
+    `New trend post added:\nAccount: ${created.account_name}\nTopic: ${created.topic}\nDate: ${postDate}\nEngagement: ${formatPercent(created.engagement_rate)}`
+  );
+
+  return replyText(target, summary);
+}
+
+async function handleTrendTopics(target, limit = 10) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 20);
+  const weekStart = getWeekStart();
+  const nextWeek = new Date(weekStart);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+
+  const posts = await getContentPostsBetween(weekStart, nextWeek);
+
+  if (posts.length === 0) {
+    return replyText(target, 'No trend posts found for this week yet.');
+  }
+
+  const stats = summarizeTopicStats(posts)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, safeLimit);
+
+  const output = `Topic frequency for week starting ${toIsoDate(weekStart)}:\n${stats.map((item, index) =>
+    `${index + 1}. ${item.topic} - ${item.count} post(s) | Avg engagement ${formatPercent(item.avgEngagement)}`
+  ).join('\n')}`;
+
+  await sendTrendingAccountWatchMessage(output);
+  return replyText(target, output);
+}
+
+async function handleTrendsWeekly(target) {
+  const weekStart = getWeekStart();
+  const prevWeekStart = getPreviousWeekStart();
+  const nextWeek = new Date(weekStart);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+
+  const currentPosts = await getContentPostsBetween(weekStart, nextWeek);
+  const previousPosts = await getContentPostsBetween(prevWeekStart, weekStart);
+
+  if (currentPosts.length === 0) {
+    return replyText(target, 'No trend posts found for this week yet.');
+  }
+
+  const currentStats = summarizeTopicStats(currentPosts);
+  const previousStats = summarizeTopicStats(previousPosts);
+
+  const mostFrequent = [...currentStats].sort((a, b) => b.count - a.count).slice(0, 5);
+  const fastestGrowing = computeGrowingTopics(currentStats, previousStats)
+    .sort((a, b) => b.changePercent - a.changePercent)
+    .slice(0, 3);
+  const bestPerforming = [...currentStats].sort((a, b) => b.avgEngagement - a.avgEngagement).slice(0, 3);
+  const ideas = buildSuggestedIdeas(mostFrequent.map(item => item.topic));
+
+  const message = [
+    'Weekly Real Estate Topic Tracker',
+    `Week starting: ${toIsoDate(weekStart)}`,
+    '',
+    'Most Frequent Topics:',
+    ...mostFrequent.map((item, index) => `${index + 1}. ${item.topic} - ${item.count} posts`),
+    '',
+    'Fastest Growing Topics:',
+    ...fastestGrowing.map((item, index) => `${index + 1}. ${item.topic} - ${formatPercent(item.changePercent)} growth`),
+    '',
+    'Best Performing Topics:',
+    ...bestPerforming.map((item, index) => `${index + 1}. ${item.topic} - Avg ${formatPercent(item.avgEngagement)} engagement`),
+    '',
+    'Suggested Content Ideas:',
+    ...ideas.map((idea, index) => `${index + 1}. ${idea}`)
+  ].join('\n');
+
+  await sendTrendingAccountWatchMessage(message);
+  return replyText(target, message);
+}
+
+async function handleTrendIdeas(target) {
+  const weekStart = getWeekStart();
+  const nextWeek = new Date(weekStart);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+
+  const posts = await getContentPostsBetween(weekStart, nextWeek);
+  if (posts.length === 0) {
+    return replyText(target, 'No trend posts found for this week yet.');
+  }
+
+  const topTopics = summarizeTopicStats(posts)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3)
+    .map(item => item.topic);
+
+  const ideas = buildSuggestedIdeas(topTopics);
+  const output = `Content ideas based on current tracker data:\n${ideas.map((idea, index) => `${index + 1}. ${idea}`).join('\n')}`;
+
+  await sendTrendingAccountWatchMessage(output);
+  return replyText(target, output);
 }
 
 const slashCommands = [
@@ -919,7 +1310,7 @@ const slashCommands = [
     .addStringOption(o => o.setName('email').setDescription('Client email').setRequired(true))
     .addStringOption(o => o.setName('date').setDescription('Original booking date').setRequired(true))
     .addStringOption(o => o.setName('time').setDescription('Original booking time').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('Optional reason').setRequired(false)),
+    .addStringOption(o => o.setName('reason').setDescription('Optional reason')),
 
   new SlashCommandBuilder()
     .setName('reschedulebooking')
@@ -928,7 +1319,30 @@ const slashCommands = [
     .addStringOption(o => o.setName('old_date').setDescription('Old date').setRequired(true))
     .addStringOption(o => o.setName('old_time').setDescription('Old time').setRequired(true))
     .addStringOption(o => o.setName('new_date').setDescription('New date').setRequired(true))
-    .addStringOption(o => o.setName('new_time').setDescription('New time').setRequired(true))
+    .addStringOption(o => o.setName('new_time').setDescription('New time').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('trackedaccounts')
+    .setDescription('Show tracked trend accounts')
+    .addStringOption(o => o.setName('tier').setDescription('Optional tier like A, B, C, or D')),
+
+  new SlashCommandBuilder()
+    .setName('classifytopic')
+    .setDescription('Classify a piece of content into a topic')
+    .addStringOption(o => o.setName('text').setDescription('Caption or hook text').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('trendstopics')
+    .setDescription('Show top topics for this week')
+    .addIntegerOption(o => o.setName('limit').setDescription('How many topics to show')),
+
+  new SlashCommandBuilder()
+    .setName('trendsweekly')
+    .setDescription('Show the weekly topic tracker summary'),
+
+  new SlashCommandBuilder()
+    .setName('trendideas')
+    .setDescription('Generate content ideas from current trend data')
 ].map(c => c.toJSON());
 
 client.once('ready', async () => {
@@ -975,7 +1389,7 @@ client.on('messageCreate', async (message) => {
 
     if (command === '!helpbot') {
       return message.reply(
-`Commands:
+`Client commands:
 !addclient Name phone email@example.com totalSessions [notes]
 !listclients
 !listclients 10
@@ -983,10 +1397,8 @@ client.on('messageCreate', async (message) => {
 !searchclient query
 !client query
 !inactiveclients
-!inactiveclients 20
 !inactiveclients 20 2
 !renewals
-!renewals 20
 !book email@example.com April-18-2026 1:00PM
 !cancelbooking email@example.com April-18-2026 1:00PM [reason]
 !reschedulebooking email@example.com April-18-2026 1:00PM April-25-2026 2:00PM
@@ -1005,96 +1417,43 @@ client.on('messageCreate', async (message) => {
 !removeclient email@example.com confirm
 !resetmonth confirm
 
-Slash versions are also available for many commands.`
+Trend tracker commands:
+!trackedaccounts
+!trackedaccounts B
+!classifytopic caption text here
+!addtrendpost username YYYY-MM-DD likes comments views https://url caption text here
+!trendstopics
+!trendsweekly
+!trendideas`
       );
     }
 
-    if (command === '!addclient') {
-      return handleAddClient(
-        message,
-        args[1],
-        args[2],
-        args[3],
-        args[4],
-        args.slice(5).join(' ')
-      );
-    }
-
-    if (command === '!listclients') {
-      return handleListClients(message, args[1], args[2]);
-    }
-
-    if (command === '!searchclient') {
-      return handleSearchClient(message, args.slice(1).join(' '));
-    }
-
-    if (command === '!client') {
-      return handleClient(message, args.slice(1).join(' '));
-    }
-
-    if (command === '!inactiveclients') {
-      return handleInactiveClients(message, args[1], args[2]);
-    }
-
-    if (command === '!renewals') {
-      return handleRenewals(message, args[1]);
-    }
-
-    if (command === '!book') {
-      return handleBook(message, args[1], args[2], args[3]);
-    }
-
-    if (command === '!cancelbooking') {
-      return handleCancelBooking(message, args[1], args[2], args[3], args.slice(4).join(' '));
-    }
-
-    if (command === '!reschedulebooking') {
-      return handleRescheduleBooking(message, args[1], args[2], args[3], args[4], args[5]);
-    }
-
-    if (command === '!undosession') {
-      return handleUndoSession(message, args[1]);
-    }
-
-    if (command === '!setphone') {
-      return handleSetPhone(message, args[1], args[2]);
-    }
-
-    if (command === '!setused') {
-      return handleSetUsed(message, args[1], args[2]);
-    }
-
-    if (command === '!setbookedmonth') {
-      return handleSetBookedMonth(message, args[1], args[2]);
-    }
-
-    if (command === '!setsessions' || command === '!settotal') {
-      return handleSetTotal(message, args[1], args[2]);
-    }
-
-    if (command === '!renewclient') {
-      return handleRenewClient(message, args[1], args[2]);
-    }
-
-    if (command === '!setnote') {
-      return handleSetNote(message, args[1], args.slice(2).join(' '));
-    }
-
-    if (command === '!note') {
-      return handleNote(message, args[1]);
-    }
-
-    if (command === '!exportcsv') {
-      return handleExportCsv(message);
-    }
-
-    if (command === '!removeclient') {
-      return handleRemoveClient(message, args[1], args[2]);
-    }
-
-    if (command === '!resetmonth') {
-      return handleResetMonth(message, args[1]);
-    }
+    if (command === '!addclient') return handleAddClient(message, args[1], args[2], args[3], args[4], args.slice(5).join(' '));
+    if (command === '!listclients') return handleListClients(message, args[1], args[2]);
+    if (command === '!searchclient') return handleSearchClient(message, args.slice(1).join(' '));
+    if (command === '!client') return handleClient(message, args.slice(1).join(' '));
+    if (command === '!inactiveclients') return handleInactiveClients(message, args[1], args[2]);
+    if (command === '!renewals') return handleRenewals(message, args[1]);
+    if (command === '!book') return handleBook(message, args[1], args[2], args[3]);
+    if (command === '!cancelbooking') return handleCancelBooking(message, args[1], args[2], args[3], args.slice(4).join(' '));
+    if (command === '!reschedulebooking') return handleRescheduleBooking(message, args[1], args[2], args[3], args[4], args[5]);
+    if (command === '!undosession') return handleUndoSession(message, args[1]);
+    if (command === '!setphone') return handleSetPhone(message, args[1], args[2]);
+    if (command === '!setused') return handleSetUsed(message, args[1], args[2]);
+    if (command === '!setbookedmonth') return handleSetBookedMonth(message, args[1], args[2]);
+    if (command === '!setsessions' || command === '!settotal') return handleSetTotal(message, args[1], args[2]);
+    if (command === '!renewclient') return handleRenewClient(message, args[1], args[2]);
+    if (command === '!setnote') return handleSetNote(message, args[1], args.slice(2).join(' '));
+    if (command === '!note') return handleNote(message, args[1]);
+    if (command === '!exportcsv') return handleExportCsv(message);
+    if (command === '!removeclient') return handleRemoveClient(message, args[1], args[2]);
+    if (command === '!resetmonth') return handleResetMonth(message, args[1]);
+    if (command === '!trackedaccounts') return handleTrackedAccounts(message, args[1] || '');
+    if (command === '!classifytopic') return handleClassifyTopic(message, args.slice(1).join(' '));
+    if (command === '!addtrendpost') return handleAddTrendPost(message, args[1], args[2], args[3], args[4], args[5], args[6], args.slice(7).join(' '));
+    if (command === '!trendstopics') return handleTrendTopics(message, args[1]);
+    if (command === '!trendsweekly') return handleTrendsWeekly(message);
+    if (command === '!trendideas') return handleTrendIdeas(message);
   } catch (error) {
     console.error(error);
     return message.reply('Something went wrong.');
@@ -1209,6 +1568,26 @@ client.on('interactionCreate', async (interaction) => {
         interaction.options.getString('new_date', true),
         interaction.options.getString('new_time', true)
       );
+    }
+
+    if (interaction.commandName === 'trackedaccounts') {
+      return handleTrackedAccounts(interaction, interaction.options.getString('tier') || '');
+    }
+
+    if (interaction.commandName === 'classifytopic') {
+      return handleClassifyTopic(interaction, interaction.options.getString('text', true));
+    }
+
+    if (interaction.commandName === 'trendstopics') {
+      return handleTrendTopics(interaction, interaction.options.getInteger('limit') || 10);
+    }
+
+    if (interaction.commandName === 'trendsweekly') {
+      return handleTrendsWeekly(interaction);
+    }
+
+    if (interaction.commandName === 'trendideas') {
+      return handleTrendIdeas(interaction);
     }
   } catch (error) {
     console.error(error);
