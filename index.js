@@ -1689,26 +1689,3 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 });
-
-client.login(BOT_TOKEN);
-You also need this SQL in Supabase before deploying:
-
-create table if not exists bookings (
-  id bigint generated always as identity primary key,
-  client_email text not null,
-  booking_date text not null,
-  booking_time text not null,
-  booking_month text not null,
-  status text not null default 'scheduled',
-  created_at timestamptz not null default timezone('utc', now()),
-  updated_at timestamptz not null default timezone('utc', now())
-);
-
-create index if not exists idx_bookings_client_email
-  on bookings(client_email);
-
-create index if not exists idx_bookings_booking_month
-  on bookings(booking_month);
-
-create index if not exists idx_bookings_status
-  on bookings(status);
