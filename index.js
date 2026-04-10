@@ -1689,3 +1689,5 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 });
+
+client.login(BOT_TOKEN);
