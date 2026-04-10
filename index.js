@@ -1145,12 +1145,15 @@ async function handleAddTrendPost(target, username, postDate, likes, comments, v
     url
   });
 
-  const summary = `Trend post saved for ${created.account_name}.\nTopic: ${created.topic}\nEngagement: ${formatPercent(created.engagement_rate)}`;
   await sendTrendingAccountWatchMessage(
-    `New trend post added:\nAccount: ${created.account_name}\nTopic: ${created.topic}\nDate: ${postDate}\nEngagement: ${formatPercent(created.engagement_rate)}`
+    `New trend post added:
+Account: ${created.account_name}
+Topic: ${created.topic}
+Date: ${postDate}
+Engagement: ${formatPercent(created.engagement_rate)}`
   );
 
-  return replyText(target, summary);
+  return replyText(target, 'Trend post saved and posted to #trending-account-watch.');
 }
 
 async function handleTrendTopics(target, limit = 10) {
@@ -1169,12 +1172,13 @@ async function handleTrendTopics(target, limit = 10) {
     .sort((a, b) => b.count - a.count)
     .slice(0, safeLimit);
 
-  const output = `Topic frequency for week starting ${toIsoDate(weekStart)}:\n${stats.map((item, index) =>
-    `${index + 1}. ${item.topic} - ${item.count} post(s) | Avg engagement ${formatPercent(item.avgEngagement)}`
-  ).join('\n')}`;
+  const output = `Topic frequency for week starting ${toIsoDate(weekStart)}:
+${stats.map((item, index) =>
+  `${index + 1}. ${item.topic} - ${item.count} post(s) | Avg engagement ${formatPercent(item.avgEngagement)}`
+).join('\n')}`;
 
   await sendTrendingAccountWatchMessage(output);
-  return replyText(target, output);
+  return replyText(target, 'Topic report posted to #trending-account-watch.');
 }
 
 async function handleTrendsWeekly(target) {
@@ -1218,7 +1222,7 @@ async function handleTrendsWeekly(target) {
   ].join('\n');
 
   await sendTrendingAccountWatchMessage(message);
-  return replyText(target, message);
+  return replyText(target, 'Weekly trend report posted to #trending-account-watch.');
 }
 
 async function handleTrendIdeas(target) {
@@ -1237,10 +1241,11 @@ async function handleTrendIdeas(target) {
     .map(item => item.topic);
 
   const ideas = buildSuggestedIdeas(topTopics);
-  const output = `Content ideas based on current tracker data:\n${ideas.map((idea, index) => `${index + 1}. ${idea}`).join('\n')}`;
+  const output = `Content ideas based on current tracker data:
+${ideas.map((idea, index) => `${index + 1}. ${idea}`).join('\n')}`;
 
   await sendTrendingAccountWatchMessage(output);
-  return replyText(target, output);
+  return replyText(target, 'Content ideas posted to #trending-account-watch.');
 }
 
 const slashCommands = [
