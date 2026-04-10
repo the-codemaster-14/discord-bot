@@ -5,7 +5,6 @@ const {
   SlashCommandBuilder
 } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
-const { Parser } = require('json2csv');
 
 const client = new Client({
   intents: [
@@ -16,7 +15,6 @@ const client = new Client({
 });
 
 const MONTHLY_REMINDERS_CHANNEL_ID = process.env.MONTHLY_REMINDERS_CHANNEL_ID || '';
-
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
 const supabase = createClient(
@@ -42,10 +40,12 @@ async function getAllClients() {
 }
 
 async function getClientByEmail(email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+
   const { data, error } = await supabase
     .from('clients')
     .select('*')
-    .eq('email', email.toLowerCase())
+    .eq('email', normalizedEmail)
     .maybeSingle();
 
   if (error) throw error;
@@ -97,6 +97,7 @@ async function resetMonthlyCountsIfNeeded() {
     }
   }
 }
+
 async function getBotMeta(key) {
   const { data, error } = await supabase
     .from('bot_meta')
@@ -136,15 +137,11 @@ function getTorontoDateParts(date = new Date()) {
 }
 
 function getFridayBeforeLastWeek(year, month) {
-  // month is 1-12
   const lastDay = new Date(Date.UTC(year, month, 0));
-  const lastDayWeekday = lastDay.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-
-  // Monday of the week containing the last day of the month
+  const lastDayWeekday = lastDay.getUTCDay();
   const mondayOffset = (lastDayWeekday + 6) % 7;
   const mondayOfLastWeek = lastDay.getUTCDate() - mondayOffset;
 
-  // Friday before that week starts = Monday - 3 days
   const target = new Date(Date.UTC(year, month - 1, mondayOfLastWeek - 3, 12));
 
   return {
@@ -159,7 +156,9 @@ function sameDateParts(a, b) {
 }
 
 async function sendMonthlyInactiveReminder() {
-  if (!MONTHLY_REMINDERS_CHANNEL_ID) return false;
+  if (!MONTHLY_REMINDERS_CHANNEL_ID) {
+    return false;
+  }
 
   const today = getTorontoDateParts();
   const target = getFridayBeforeLastWeek(today.year, today.month);
@@ -197,19 +196,8 @@ async function sendMonthlyInactiveReminder() {
 
   await channel.send({
     content: inactive.length === 0
-      ? `📌 Monthly reminder: everyone has booked for ${monthKey}.`
-      : `📌 Monthly reminder: ${inactive.length} client(s) have not booked for ${monthKey}.\nAttached: full CSV.\n\nShowing first ${Math.min(inactive.length, 15)}:\n${preview}`,
-    files: [attachment]
-  });
-
-  await setBotMeta('monthly_inactive_reminder_last_sent', monthKey);
-  return true;
-}
-
-  await channel.send({
-    content: inactive.length === 0
-      ? `📌 Monthly reminder: everyone has booked for ${monthKey}.`
-      : `📌 Monthly reminder: ${inactive.length} client(s) have not booked for ${monthKey}.\n\nShowing first ${Math.min(inactive.length, 50)}:\n${preview}`,
+      ? `Monthly reminder: everyone has booked for ${monthKey}.`
+      : `Monthly reminder: ${inactive.length} client(s) have not booked for ${monthKey}.\nAttached: full CSV.\n\nShowing first ${Math.min(inactive.length, 15)}:\n${preview}`,
     files: [attachment]
   });
 
@@ -247,8 +235,8 @@ async function forceSendMonthlyInactiveReminder() {
 
   await channel.send({
     content: inactive.length === 0
-      ? `📌 Manual monthly reminder test: everyone has booked for ${monthKey}.`
-      : `📌 Manual monthly reminder test: ${inactive.length} client(s) have not booked for ${monthKey}.\nAttached: full CSV.\n\nShowing first ${Math.min(inactive.length, 15)}:\n${preview}`,
+      ? `Manual monthly reminder test: everyone has booked for ${monthKey}.`
+      : `Manual monthly reminder test: ${inactive.length} client(s) have not booked for ${monthKey}.\nAttached: full CSV.\n\nShowing first ${Math.min(inactive.length, 15)}:\n${preview}`,
     files: [attachment]
   });
 
@@ -501,7 +489,7 @@ async function handleBook(target, email, bookingDate, bookingTime) {
   if (c.sessions_used >= c.sessions_total) {
     return replyText(
       target,
-      `❌ Booking blocked.\n${c.name} is already at ${c.sessions_used}/${c.sessions_total}. Renew them first if needed.`
+      `Booking blocked.\n${c.name} is already at ${c.sessions_used}/${c.sessions_total}. Renew them first if needed.`
     );
   }
 
@@ -646,7 +634,7 @@ async function handleRenewClient(target, email, total = 6) {
     last_reset_month: currentMonthKey()
   });
 
-  return replyText(target, `✅ Renewed ${updated.name}. Sessions reset to 0/${updated.sessions_total}.`);
+  return replyText(target, `Renewed ${updated.name}. Sessions reset to 0/${updated.sessions_total}.`);
 }
 
 async function handleSetNote(target, email, note) {
@@ -830,7 +818,7 @@ const slashCommands = [
     .setDescription('Export all clients as CSV')
 ].map(c => c.toJSON());
 
-client.once('clientReady', async () => {
+client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   try {
@@ -862,15 +850,15 @@ client.on('messageCreate', async (message) => {
     const args = message.content.trim().split(' ');
     const command = args[0]?.toLowerCase();
 
-  if (command === '!monthlyreminder') {
-  const sent = await forceSendMonthlyInactiveReminder();
+    if (command === '!monthlyreminder' || command === '!forcesendmonthlyreminder') {
+      const sent = await forceSendMonthlyInactiveReminder();
 
-  if (!sent) {
-    return message.reply('Could not send monthly reminder. Check MONTHLY_REMINDERS_CHANNEL_ID.');
-  }
+      if (!sent) {
+        return message.reply('Could not send monthly reminder. Check MONTHLY_REMINDERS_CHANNEL_ID.');
+      }
 
-  return message.reply('Monthly reminder sent to the monthly reminders channel.');
-}
+      return message.reply('Monthly reminder sent to the monthly reminders channel.');
+    }
 
     if (command === '!helpbot') {
       return message.reply(
@@ -898,6 +886,7 @@ client.on('messageCreate', async (message) => {
 !note email@example.com
 !exportcsv
 !monthlyreminder
+!forcesendmonthlyreminder
 !removeclient email@example.com confirm
 !resetmonth confirm
 
